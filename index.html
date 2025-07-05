@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Image Search - Pinterest Style</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Universal Image Search</h1>
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search for any images...">
+                <button id="searchButton">Search</button>
+            </div>
+        </header>
+        <div id="loading" class="loading hidden">Searching</div>
+        <div id="results" class="results-grid"></div>
+    </div>
+
+    <!-- Enhanced Modal -->
+    <div id="imageModal" class="modal">
+        <span class="close-modal">&times;</span>
+        <div class="modal-content">
+            <div class="modal-nav modal-prev"></div>
+            <div class="modal-image-container">
+                <img id="modalImage" class="modal-image" src="" alt="">
+            </div>
+            <div class="modal-nav modal-next"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
