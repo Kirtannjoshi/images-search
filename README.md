@@ -13,7 +13,7 @@ A simple and responsive web-based image search app powered by web scraping.
    ```bash
    git clone https://github.com/Kirtannjoshi/images-search.git
    ```
-2. Open index.html in your browser.
+2. Open index.html in your browser or visit the [Live Demo](https://kirtannjoshi.github.io/images-search/)
 3. Type your query in the search bar and hit Enter.
 
 ## 💡 Future Ideas
