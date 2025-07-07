@@ -326,3 +326,41 @@ h1 {
     transform: scale(1.05);
 }
 
+.filter-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.filter-buttons button {
+    padding: 8px 16px;
+    background: #2f2f2f;
+    border: none;
+    border-radius: 20px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.filter-buttons button:hover {
+    background: #4CAF50;
+}
+
+.favorite-btn {
+    background: #FFC107;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 10px;
+    margin-left: 10px;
+    transition: all 0.3s;
+}
+
+.favorite-btn:hover {
+    background: #FFA000;
+    transform: scale(1.05);
+}
+
