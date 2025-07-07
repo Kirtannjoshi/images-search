@@ -7,7 +7,6 @@ const modalImg = document.getElementById('modalImage');
 const closeModal = document.querySelector('.close-modal');
 const prevButton = document.querySelector('.modal-prev');
 const nextButton = document.querySelector('.modal-next');
-const showFavoritesButton = document.getElementById('showFavoritesButton');
 
 let currentImageIndex = 0;
 let allImages = [];
@@ -76,6 +75,9 @@ function navigateModal(direction) {
     }
 }
 
+// Cache for storing successful image sources
+const sourceCache = new Map();
+
 async function searchImages(query, page = 1) {
     if (!query) {
         showWelcomeMessage();
@@ -88,11 +90,16 @@ async function searchImages(query, page = 1) {
         allImages = [];
     }
 
-    const fragment = document.createDocumentFragment();
-
     loadingDiv.classList.remove('hidden');
 
     try {
+        // Check cache first
+        if (sourceCache.has(query)) {
+            const cachedUrl = sourceCache.get(query);
+            await processImageSource(cachedUrl, query);
+            return;
+        }
+
         const proxyUrl = 'https://api.allorigins.win/raw?url=';
         const searchUrls = [
             `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&tbs=isz:l`,
@@ -111,25 +118,36 @@ async function searchImages(query, page = 1) {
 
                 const imageElements = Array.from(doc.querySelectorAll('img[src], img[data-src]'));
                 
-                for (const img of imageElements) {
+                // Process images in parallel
+                const imagePromises = imageElements.map(async (img) => {
                     const highQualityUrl = extractHighQualityUrl(img);
                     
                     if (await validateImage(highQualityUrl)) {
                         const dimensions = await getImageDimensions(highQualityUrl);
                         
                         if (dimensions.width >= 500 || dimensions.height >= 500) {
-                        const card = createImageCard(highQualityUrl, img.alt || 'Image', dimensions.width, dimensions.height);
-                        const cardImg = card.querySelector('img');
-                        allImages.push(cardImg);
-                        const currentIndex = allImages.length - 1;
-                        cardImg.addEventListener('click', () => showModal(cardImg, currentIndex));
-                        fragment.appendChild(card);
+                            return { img, highQualityUrl, dimensions };
+                        }
                     }
-                    }
-                }
+                    return null;
+                });
 
-                if (fragment.children.length > 0) {
-                    resultsDiv.appendChild(fragment);
+                const validImages = (await Promise.all(imagePromises)).filter(Boolean);
+                
+                if (validImages.length > 0) {
+                    // Cache the successful source
+                    sourceCache.set(query, searchUrl);
+                    
+                    // Process images in batches to avoid UI freezing
+                    const batchSize = 5;
+                    for (let i = 0; i < validImages.length; i += batchSize) {
+                        const batch = validImages.slice(i, i + batchSize);
+                        await processImageBatch(batch);
+                        
+                        // Small delay between batches for better UI responsiveness
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                    }
+                    
                     break;
                 }
             } catch (error) {
@@ -175,6 +193,84 @@ document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') modal.style.display = 'none';
     }
 });
+
+// Helper function to process a batch of images
+async function processImageBatch(batch) {
+    const fragment = document.createDocumentFragment();
+    
+    for (const { img, highQualityUrl, dimensions } of batch) {
+        const card = document.createElement('div');
+        card.className = 'image-card';
+        
+        // Calculate row span based on image dimensions (10px row height base)
+        const rowSpan = Math.ceil(dimensions.height / (dimensions.width / 300) / 10);
+        card.style.setProperty('--row-span', rowSpan);
+        
+        const imgElement = document.createElement('img');
+        imgElement.src = highQualityUrl;
+        imgElement.alt = img.alt || 'Image';
+        imgElement.setAttribute('data-full', highQualityUrl);
+        
+        card.innerHTML = `
+            <div class="image-container">
+                <img src="${highQualityUrl}" 
+                     alt="${img.alt || 'Image'}"
+                     data-full="${highQualityUrl}"
+                     onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
+            </div>
+            <div class="image-info">
+                <div class="image-title">${img.alt || 'Untitled Image'}</div>
+                <div class="image-resolution">${dimensions.width}x${dimensions.height}</div>
+                <button class="download-btn" onclick="downloadImage('${highQualityUrl}', '${(img.alt || 'image').replace(/[^a-z0-9]/gi, '_')}')">
+                    Download
+                </button>
+            </div>
+        `;
+        
+        const cardImg = card.querySelector('img');
+        allImages.push(cardImg);
+        
+        const currentIndex = allImages.length - 1;
+        cardImg.addEventListener('click', () => showModal(cardImg, currentIndex));
+        
+        fragment.appendChild(card);
+    }
+    
+    resultsDiv.appendChild(fragment);
+}
+
+// Helper function to process cached image source
+async function processImageSource(url, query) {
+    try {
+        const response = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(url));
+        if (!response.ok) return;
+
+        const html = await response.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        const imageElements = Array.from(doc.querySelectorAll('img[src], img[data-src]'));
+        const validImages = [];
+        
+        for (const img of imageElements) {
+            const highQualityUrl = extractHighQualityUrl(img);
+            
+            if (await validateImage(highQualityUrl)) {
+                const dimensions = await getImageDimensions(highQualityUrl);
+                
+                if (dimensions.width >= 500 || dimensions.height >= 500) {
+                    validImages.push({ img, highQualityUrl, dimensions });
+                }
+            }
+        }
+        
+        if (validImages.length > 0) {
+            await processImageBatch(validImages);
+        }
+    } catch (error) {
+        console.error('Error processing cached source:', error);
+    }
+}
 
 // Helper functions for UI messages
 function showWelcomeMessage() {
@@ -233,13 +329,7 @@ searchInput.addEventListener('keypress', (e) => {
 });
 
 // Initialize
-window.addEventListener('load', () => {
-    showWelcomeMessage();
-    addCategoryFilter();
-    addFilterButtons();
-});
-
-showFavoritesButton.addEventListener('click', showFavorites);
+window.addEventListener('load', showWelcomeMessage);
 
 // Handle image loading errors
 window.addEventListener('error', function(e) {
@@ -300,31 +390,9 @@ function addToFavorites(imageUrl) {
 function showFavorites() {
     const savedFavorites = JSON.parse(localStorage.getItem('favorites') || '[]');
     resultsDiv.innerHTML = '';
-    if (savedFavorites.length === 0) {
-        resultsDiv.innerHTML = `
-            <div class="error-message" style="text-align: center; padding: 40px;">
-                <h3 style="color: #ff6b6b; margin-bottom: 20px;">No favorites yet!</h3>
-                <p style="color: #fff;">Add some images to your favorites to see them here.</p>
-            </div>
-        `;
-        return;
-    }
     savedFavorites.forEach(url => {
-        const card = createImageCard(url, 'Favorite Image', 0, 0); // Dimensions can be fetched if needed
-        resultsDiv.appendChild(card);
+        // Create image card for each favorite
     });
-}
-
-function addFavoriteButton(card, imageUrl) {
-    const favBtn = document.createElement('button');
-    favBtn.className = 'favorite-btn';
-    favBtn.innerHTML = 'Add to Favorites';
-    favBtn.onclick = () => {
-        addToFavorites(imageUrl);
-        favBtn.textContent = 'Added!';
-        favBtn.disabled = true;
-    };
-    card.querySelector('.image-info').appendChild(favBtn);
 }
 
 function addShareButton(card, imageUrl) {
@@ -365,44 +433,4 @@ function applyImageFilter(image, filter) {
         brightness: 'brightness(150%)'
     };
     image.style.filter = filters[filter];
-}
-
-function addFilterButtons() {
-    const filterNames = ['grayscale', 'sepia', 'blur', 'brightness'];
-    const filterContainer = document.createElement('div');
-    filterContainer.className = 'filter-buttons';
-    filterNames.forEach(filter => {
-        const button = document.createElement('button');
-        button.textContent = filter.charAt(0).toUpperCase() + filter.slice(1);
-        button.onclick = () => {
-            document.querySelectorAll('.image-card img').forEach(img => {
-                applyImageFilter(img, filter);
-            });
-        };
-        filterContainer.appendChild(button);
-    });
-    document.querySelector('header').appendChild(filterContainer);
-}
-
-function createImageCard(imageUrl, altText, width, height) {
-    const card = document.createElement('div');
-    card.className = 'image-card';
-    card.innerHTML = `
-        <div class="image-container">
-            <img src="${imageUrl}" 
-                 alt="${altText}"
-                 data-full="${imageUrl}"
-                 onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
-        </div>
-        <div class="image-info">
-            <div class="image-title">${altText}</div>
-            <div class="image-resolution">${width}x${height}</div>
-            <button class="download-btn" onclick="downloadImage('${imageUrl}', '${altText.replace(/[^a-z0-9]/gi, '_')}')">
-                Download
-            </button>
-        </div>
-    `;
-    addShareButton(card, imageUrl);
-    addFavoriteButton(card, imageUrl);
-    return card;
 }

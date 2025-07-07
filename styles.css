@@ -71,9 +71,21 @@ h1 {
 }
 
 .results-grid {
-    columns: 5 300px;
-    column-gap: 20px;
-    padding: 20px 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    grid-auto-rows: 10px; /* Base row height */
+    gap: 20px;
+    padding: 20px;
+}
+
+.image-card {
+    grid-row-end: span var(--row-span);
+    transition: all 0.3s ease;
+}
+
+.image-card:hover {
+    transform: scale(1.02);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.2);
 }
 
 .image-card {
@@ -323,44 +335,6 @@ h1 {
 
 .share-btn:hover {
     background: #1976D2;
-    transform: scale(1.05);
-}
-
-.filter-buttons {
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    margin-top: 20px;
-}
-
-.filter-buttons button {
-    padding: 8px 16px;
-    background: #2f2f2f;
-    border: none;
-    border-radius: 20px;
-    color: white;
-    cursor: pointer;
-    transition: all 0.3s;
-}
-
-.filter-buttons button:hover {
-    background: #4CAF50;
-}
-
-.favorite-btn {
-    background: #FFC107;
-    color: white;
-    border: none;
-    padding: 8px 15px;
-    border-radius: 5px;
-    cursor: pointer;
-    margin-top: 10px;
-    margin-left: 10px;
-    transition: all 0.3s;
-}
-
-.favorite-btn:hover {
-    background: #FFA000;
     transform: scale(1.05);
 }
 
