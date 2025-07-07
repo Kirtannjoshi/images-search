@@ -7,6 +7,7 @@ const modalImg = document.getElementById('modalImage');
 const closeModal = document.querySelector('.close-modal');
 const prevButton = document.querySelector('.modal-prev');
 const nextButton = document.querySelector('.modal-next');
+const showFavoritesButton = document.getElementById('showFavoritesButton');
 
 let currentImageIndex = 0;
 let allImages = [];
@@ -87,6 +88,8 @@ async function searchImages(query, page = 1) {
         allImages = [];
     }
 
+    const fragment = document.createDocumentFragment();
+
     loadingDiv.classList.remove('hidden');
 
     try {
@@ -115,42 +118,20 @@ async function searchImages(query, page = 1) {
                         const dimensions = await getImageDimensions(highQualityUrl);
                         
                         if (dimensions.width >= 500 || dimensions.height >= 500) {
-                            const card = document.createElement('div');
-                            card.className = 'image-card';
-                            
-                            const imgElement = document.createElement('img');
-                            imgElement.src = highQualityUrl;
-                            imgElement.alt = img.alt || 'Image';
-                            imgElement.setAttribute('data-full', highQualityUrl);
-                            
-                            card.innerHTML = `
-                                <div class="image-container">
-                                    <img src="${highQualityUrl}" 
-                                         alt="${img.alt || 'Image'}"
-                                         data-full="${highQualityUrl}"
-                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
-                                </div>
-                                <div class="image-info">
-                                    <div class="image-title">${img.alt || 'Untitled Image'}</div>
-                                    <div class="image-resolution">${dimensions.width}x${dimensions.height}</div>
-                                    <button class="download-btn" onclick="downloadImage('${highQualityUrl}', '${(img.alt || 'image').replace(/[^a-z0-9]/gi, '_')}')">
-                                        Download
-                                    </button>
-                                </div>
-                            `;
-                            
-                            const cardImg = card.querySelector('img');
-                            allImages.push(cardImg);
-                            
-                            const currentIndex = allImages.length - 1;
-                            cardImg.addEventListener('click', () => showModal(cardImg, currentIndex));
-                            
-                            resultsDiv.appendChild(card);
-                        }
+                        const card = createImageCard(highQualityUrl, img.alt || 'Image', dimensions.width, dimensions.height);
+                        const cardImg = card.querySelector('img');
+                        allImages.push(cardImg);
+                        const currentIndex = allImages.length - 1;
+                        cardImg.addEventListener('click', () => showModal(cardImg, currentIndex));
+                        fragment.appendChild(card);
+                    }
                     }
                 }
 
-                if (resultsDiv.children.length > 0) break;
+                if (fragment.children.length > 0) {
+                    resultsDiv.appendChild(fragment);
+                    break;
+                }
             } catch (error) {
                 console.error('Error with source:', error);
                 continue;
@@ -252,7 +233,13 @@ searchInput.addEventListener('keypress', (e) => {
 });
 
 // Initialize
-window.addEventListener('load', showWelcomeMessage);
+window.addEventListener('load', () => {
+    showWelcomeMessage();
+    addCategoryFilter();
+    addFilterButtons();
+});
+
+showFavoritesButton.addEventListener('click', showFavorites);
 
 // Handle image loading errors
 window.addEventListener('error', function(e) {
@@ -313,9 +300,31 @@ function addToFavorites(imageUrl) {
 function showFavorites() {
     const savedFavorites = JSON.parse(localStorage.getItem('favorites') || '[]');
     resultsDiv.innerHTML = '';
+    if (savedFavorites.length === 0) {
+        resultsDiv.innerHTML = `
+            <div class="error-message" style="text-align: center; padding: 40px;">
+                <h3 style="color: #ff6b6b; margin-bottom: 20px;">No favorites yet!</h3>
+                <p style="color: #fff;">Add some images to your favorites to see them here.</p>
+            </div>
+        `;
+        return;
+    }
     savedFavorites.forEach(url => {
-        // Create image card for each favorite
+        const card = createImageCard(url, 'Favorite Image', 0, 0); // Dimensions can be fetched if needed
+        resultsDiv.appendChild(card);
     });
+}
+
+function addFavoriteButton(card, imageUrl) {
+    const favBtn = document.createElement('button');
+    favBtn.className = 'favorite-btn';
+    favBtn.innerHTML = 'Add to Favorites';
+    favBtn.onclick = () => {
+        addToFavorites(imageUrl);
+        favBtn.textContent = 'Added!';
+        favBtn.disabled = true;
+    };
+    card.querySelector('.image-info').appendChild(favBtn);
 }
 
 function addShareButton(card, imageUrl) {
@@ -356,4 +365,44 @@ function applyImageFilter(image, filter) {
         brightness: 'brightness(150%)'
     };
     image.style.filter = filters[filter];
-} 
+}
+
+function addFilterButtons() {
+    const filterNames = ['grayscale', 'sepia', 'blur', 'brightness'];
+    const filterContainer = document.createElement('div');
+    filterContainer.className = 'filter-buttons';
+    filterNames.forEach(filter => {
+        const button = document.createElement('button');
+        button.textContent = filter.charAt(0).toUpperCase() + filter.slice(1);
+        button.onclick = () => {
+            document.querySelectorAll('.image-card img').forEach(img => {
+                applyImageFilter(img, filter);
+            });
+        };
+        filterContainer.appendChild(button);
+    });
+    document.querySelector('header').appendChild(filterContainer);
+}
+
+function createImageCard(imageUrl, altText, width, height) {
+    const card = document.createElement('div');
+    card.className = 'image-card';
+    card.innerHTML = `
+        <div class="image-container">
+            <img src="${imageUrl}" 
+                 alt="${altText}"
+                 data-full="${imageUrl}"
+                 onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
+        </div>
+        <div class="image-info">
+            <div class="image-title">${altText}</div>
+            <div class="image-resolution">${width}x${height}</div>
+            <button class="download-btn" onclick="downloadImage('${imageUrl}', '${altText.replace(/[^a-z0-9]/gi, '_')}')">
+                Download
+            </button>
+        </div>
+    `;
+    addShareButton(card, imageUrl);
+    addFavoriteButton(card, imageUrl);
+    return card;
+}
