@@ -27,7 +27,7 @@ Services
 
 ## 🧠 API
 Query endpoint
-- GET /api/search?q=cats&safe=active
+- GET /api/search?q=cats&page=1&sources=google,bing,unsplash,duckduckgo,flickr
 
 Response shape (simplified)
 ```
@@ -53,3 +53,11 @@ static.js      # Static web server
 
 ## 🪪 License
 MIT License
+
+## 🔗 GitHub Pages + Remote API
+If you host the frontend on GitHub Pages but want full aggregation (Google/Bing/… via server), deploy the API (api.js) to a host (Render, Railway, etc.), then configure the frontend to use it:
+
+Options
+- Add a meta tag in index.html: <meta name="api-base" content="https://your-api-host">.
+- Or pass it in URL: https://kirtannjoshi.github.io/images-search/?api=https://your-api-host
+- It’s saved in localStorage so you only need to set it once per browser.
