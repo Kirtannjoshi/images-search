@@ -50,6 +50,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const searchCache = new Map();
             let searchTimeout = null;
 
+            // --- Environment detection (GitHub Pages vs Localhost) ---
+            const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
+            const API_BASE = isLocal ? 'http://localhost:3001' : '';
+            const PROXY_BASE = isLocal ? 'http://localhost:8080/' : '';
+
             // Load favorites from memory (since localStorage is not available)
             let favoritesData = [];
 
@@ -150,16 +155,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     // 1) Try server API first for speed and reliability
                     let allValidImages = [];
-                    try {
-                        const apiRes = await fetch(`http://localhost:3001/api/search?q=${encodeURIComponent(query)}&page=${page}`, {
-                            headers: { 'Accept': 'application/json' }
-                        });
-                        if (apiRes.ok) {
-                            const json = await apiRes.json();
-                            allValidImages = json.results || [];
+                    if (API_BASE) {
+                        try {
+                            const apiRes = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${page}`, {
+                                headers: { 'Accept': 'application/json' }
+                            });
+                            if (apiRes.ok) {
+                                const json = await apiRes.json();
+                                allValidImages = json.results || [];
+                            }
+                        } catch (e) {
+                            // ignore, fallback below
                         }
-                    } catch (e) {
-                        // ignore, fallback below
                     }
 
                     // 2) If API had nothing, fallback to client-side multi-source with timeouts
@@ -176,6 +183,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             Promise.race([
                                 searchPixabay(query, page),
                                 new Promise(resolve => setTimeout(() => resolve([]), 2000))
+                            ]),
+                            Promise.race([
+                                searchWikimediaCommons(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), 2500))
                             ])
                         ];
 
@@ -226,9 +237,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // Google Images scraper using CORS proxy
             async function searchGoogleImages(query, page = 1) {
                 try {
+                    if (!PROXY_BASE) return []; // Not available on GitHub Pages
                     const start = (page - 1) * 20;
                     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&start=${start}&ijn=0`;
-                    const proxyUrl = `http://localhost:8080/${searchUrl}`;
+                    const proxyUrl = `${PROXY_BASE}${searchUrl}`;
                     
                     const response = await fetch(proxyUrl, {
                         headers: {
@@ -310,8 +322,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Unsplash scraping fallback
             async function searchUnsplashScrape(query, page = 1) {
                 try {
+                    if (!PROXY_BASE) return []; // Not available on GitHub Pages
                     const searchUrl = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
-                    const proxyUrl = `http://localhost:8080/${searchUrl}`;
+                    const proxyUrl = `${PROXY_BASE}${searchUrl}`;
                     
                     const response = await fetch(proxyUrl, {
                         headers: {
@@ -382,6 +395,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
+            // Wikimedia Commons (no key, CORS-friendly) – good fallback for GitHub Pages
+            async function searchWikimediaCommons(query, page = 1) {
+                try {
+                    const gsroffset = (page - 1) * 24;
+                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=24&prop=imageinfo&iiprop=url%7Csize&format=json&origin=*${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error('Wikimedia API failed');
+                    const data = await response.json();
+                    const pages = (data.query && data.query.pages) ? Object.values(data.query.pages) : [];
+                    return pages
+                        .map(p => {
+                            const ii = p.imageinfo && p.imageinfo[0];
+                            if (!ii || !ii.url) return null;
+                            return {
+                                highQualityUrl: ii.url,
+                                alt: p.title.replace('File:', '').replace(/_/g, ' '),
+                                dimensions: { width: ii.width || 1024, height: ii.height || 768 },
+                                source: 'wikimedia'
+                            };
+                        })
+                        .filter(Boolean);
+                } catch (e) {
+                    console.log('Wikimedia search failed:', e);
+                    return [];
+                }
+            }
+
             function isValidImageUrl(url) {
                 if (!url || url.startsWith('data:') || url.includes('logo') || url.includes('icon')) return false;
                 const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif'];
@@ -401,9 +441,11 @@ document.addEventListener('DOMContentLoaded', () => {
             function sortImagesByQuality(images) {
                 return images.sort((a, b) => {
                     // Prioritize by source reliability and image dimensions
-                    const sourceWeight = { google: 3, unsplash: 2, pixabay: 1 };
-                    const aScore = (sourceWeight[a.source] || 0) * 1000 + (a.dimensions.width * a.dimensions.height);
-                    const bScore = (sourceWeight[b.source] || 0) * 1000 + (b.dimensions.width * b.dimensions.height);
+                    const sourceWeight = { google: 3, unsplash: 2, pixabay: 1, wikimedia: 1 };
+                    const aW = (a.dimensions?.width || 0), aH = (a.dimensions?.height || 0);
+                    const bW = (b.dimensions?.width || 0), bH = (b.dimensions?.height || 0);
+                    const aScore = (sourceWeight[a.source] || 0) * 1000 + (aW * aH);
+                    const bScore = (sourceWeight[b.source] || 0) * 1000 + (bW * bH);
                     return bScore - aScore;
                 });
             }
@@ -543,10 +585,10 @@ document.addEventListener('DOMContentLoaded', () => {
         async function downloadImage(url, filename) {
             try {
                 // Use our local CORS proxy for downloads
-                const proxyUrl = `http://localhost:8080/${url}`;
-                const response = await fetch(proxyUrl, {
+        const targetUrl = PROXY_BASE ? `${PROXY_BASE}${url}` : url;
+        const response = await fetch(targetUrl, {
                     headers: {
-                        'X-Requested-With': 'XMLHttpRequest'
+            'X-Requested-With': PROXY_BASE ? 'XMLHttpRequest' : ''
                     }
                 });
                 
