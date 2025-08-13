@@ -286,6 +286,7 @@ md-fab.hidden {
     gap: 24px;
     padding: 24px 16px;
     width: 100%;
+    contain: content;
 }
 
 .image-card {
@@ -773,6 +774,8 @@ md-fab.hidden {
     border-bottom: 1px solid var(--md-sys-color-outline-variant);
     /* Ensure image is part of the GPU accelerated layer */
     will-change: transform;
+    content-visibility: auto;
+    contain-intrinsic-size: 200px 150px;
 }
 
 .image-card .info {

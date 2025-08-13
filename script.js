@@ -174,19 +174,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         const searchPromises = [
                             Promise.race([
                                 searchGoogleImages(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 3000))
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 3000 : 1800))
                             ]),
                             Promise.race([
                                 searchUnsplash(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 2000))
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1200))
                             ]),
                             Promise.race([
                                 searchPixabay(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 2000))
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1200))
                             ]),
                             Promise.race([
                                 searchWikimediaCommons(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 2500))
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2500 : 1400))
                             ])
                         ];
 
@@ -207,11 +207,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         searchCache.set(cacheKey, sortedImages.slice(0, 24));
                     }
 
+                    const sliceCount = isLocal ? 24 : 18; // show fewer initially on hosted for faster paint
                     if (sortedImages.length > 0) {
                         if (page === 1) {
                             resultsDiv.innerHTML = '';
                         }
-                        displayImages(sortedImages.slice(0, 24)); // Show up to 24 best images
+                        displayImages(sortedImages.slice(0, sliceCount));
                         hideSkeletonLoading();
                     } else if (page === 1) {
                         hideSkeletonLoading();
@@ -460,9 +461,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const aspectRatio = imgData.dimensions.height / imgData.dimensions.width;
                 const isFavorited = favorites.has(imgData.highQualityUrl);
 
-                card.innerHTML = `
+        card.innerHTML = `
                     <div class="aspect-ratio-box" style="padding-bottom: ${Math.min(aspectRatio * 100, 150)}%;">
-                        <img src="${imgData.highQualityUrl}" alt="${imgData.alt}" loading="${index < 6 ? 'eager' : 'lazy'}" 
+            <img src="${imgData.highQualityUrl}" alt="${imgData.alt}" loading="${index < 6 ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer" 
                              onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
                     </div>
                     <div class="image-info">
@@ -748,7 +749,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentPage++;
                 searchImages(searchInput.value, currentPage);
             }
-    }, 200), { passive: true });
+    }, isLocal ? 200 : 500), { passive: true });
 
         // Handle initial search if there's a query in the URL (e.g., from a share link)
         const urlParams = new URLSearchParams(window.location.search);
