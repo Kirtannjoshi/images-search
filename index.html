@@ -25,6 +25,8 @@
     <link rel="dns-prefetch" href="//upload.wikimedia.org">
     <link rel="dns-prefetch" href="//images.unsplash.com">
     <link rel="dns-prefetch" href="//www.google.com">
+    <!-- Optional: set this to your deployed API base so GitHub Pages can call it -->
+    <meta name="api-base" content="">
     <script type="importmap">
       {
         "imports": {
@@ -32,11 +34,24 @@
         }
       }
     </script>
-        <script type="module">
+                <script type="module">
             // Load Material Web components
             import '@material/web/all.js';
             // Note: Removed adoptedStyleSheets push to avoid CSSStyleSheet conversion errors across browsers
         </script>
+                <script>
+                        // Configure remote API base for hosted mode (GitHub Pages)
+                        (function(){
+                            const meta = document.querySelector('meta[name="api-base"]');
+                            const fromMeta = meta && meta.content ? meta.content.trim() : '';
+                            const params = new URLSearchParams(location.search);
+                            const fromParam = params.get('api') || '';
+                            const fromStore = localStorage.getItem('api_base') || '';
+                            const chosen = fromParam || fromMeta || fromStore;
+                            if (fromParam) { try { localStorage.setItem('api_base', fromParam); } catch(_){} }
+                            if (chosen) { window.__API_BASE__ = chosen; }
+                        })();
+                </script>
 </head>
 <body>
     <div class="container">

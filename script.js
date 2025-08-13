@@ -52,7 +52,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // --- Environment detection (GitHub Pages vs Localhost) ---
             const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
-            const API_BASE = isLocal ? 'http://localhost:3001' : '';
+            // Allow hosted site to use a deployed API base via meta/param/localStorage (see index.html)
+            const configuredApiBase = (typeof window !== 'undefined' && window.__API_BASE__) ? window.__API_BASE__ : '';
+            const API_BASE = isLocal ? 'http://localhost:3001' : configuredApiBase;
             const PROXY_BASE = isLocal ? 'http://localhost:8080/' : '';
 
             // Session storage cache (persists during tab session)

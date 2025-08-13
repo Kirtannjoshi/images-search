@@ -108,6 +108,54 @@ async function searchGoogleImages(query, page = 1, timeoutMs = 5000) {
   }
 }
 
+// DuckDuckGo Images (HTML parse)
+async function searchDuckDuckGoImages(query, page = 1, timeoutMs = 5000) {
+  try {
+    const s = (page - 1) * 25;
+    const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images&s=${s}`;
+    const { data: html } = await axios.get(url, {
+      headers: { 'User-Agent': UA },
+      timeout: timeoutMs,
+      maxRedirects: 5,
+      validateStatus: (st) => st >= 200 && st < 400,
+    });
+    const $ = cheerio.load(html);
+    const images = [];
+    $('img.tile--img__img').each((_, el) => {
+      const src = $(el).attr('src');
+      const alt = $(el).attr('alt') || query;
+      if (src && isValidImageUrl(src)) {
+        images.push({
+          highQualityUrl: src,
+          alt,
+          dimensions: { width: 1200, height: 800 },
+          source: 'duckduckgo',
+        });
+      }
+    });
+    return images.slice(0, 20);
+  } catch (err) {
+    return [];
+  }
+}
+
+// Flickr public feed (no key)
+async function searchFlickrPublic(query, timeoutMs = 5000) {
+  try {
+    const url = `https://www.flickr.com/services/feeds/photos_public.gne?format=json&nojsoncallback=1&tags=${encodeURIComponent(query)}`;
+    const { data } = await axios.get(url, { headers: { 'User-Agent': UA }, timeout: timeoutMs });
+    const items = Array.isArray(data.items) ? data.items : [];
+    return items.map((it) => ({
+      highQualityUrl: (it.media && it.media.m ? it.media.m.replace('_m.', '_b.') : ''),
+      alt: it.title || query,
+      dimensions: { width: 1200, height: 800 },
+      source: 'flickr',
+    })).filter((i) => i.highQualityUrl && isValidImageUrl(i.highQualityUrl)).slice(0, 20);
+  } catch (err) {
+    return [];
+  }
+}
+
 // Unsplash scraping fallback
 async function searchUnsplashScrape(query, page = 1, timeoutMs = 5000) {
   try {
@@ -189,8 +237,10 @@ app.get('/api/search', async (req, res) => {
 
   const results = await Promise.allSettled([
     searchGoogleImages(query, page, 6000),
-    searchUnsplashScrape(query, page, 6000),
     searchBingImages(query, page, 6000),
+    searchDuckDuckGoImages(query, page, 5000),
+    searchUnsplashScrape(query, page, 6000),
+    searchFlickrPublic(query, 5000),
   ]);
   let all = [];
   for (const r of results) {
@@ -198,7 +248,7 @@ app.get('/api/search', async (req, res) => {
   }
   all = dedupe(all);
 
-  const weight = { google: 3, bing: 2.5, unsplash: 2 };
+  const weight = { google: 3, bing: 2.5, duckduckgo: 2, unsplash: 2, flickr: 1.5 };
   all = all
     .map((i) => {
       const base = (weight[i.source] || 0) * 1000 + (i.dimensions.width || 0) * (i.dimensions.height || 0);
