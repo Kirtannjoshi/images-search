@@ -3,34 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal Image Search - Pinterest Style</title>
+    <meta name="description" content="Universal Image Search - Find high-quality, royalty-free images for your projects using Material Design 3">
+    <meta name="keywords" content="image search, free images, high quality images, material design, stock photos">
+    <meta name="author" content="Universal Image Search">
+    <meta property="og:title" content="Universal Image Search - Material Design 3">
+    <meta property="og:description" content="Find beautiful, high-quality images for your projects with our Material Design 3 image search engine">
+    <meta property="og:type" content="website">
+    <meta name="theme-color" content="#6750A4">
+    <title>Universal Image Search - Material Design 3</title>
+    
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
     <link rel="stylesheet" href="styles.css">
+
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <script type="importmap">
+      {
+        "imports": {
+          "@material/web/": "https://esm.run/@material/web/"
+        }
+      }
+    </script>
+        <script type="module">
+            // Load Material Web components
+            import '@material/web/all.js';
+            // Note: Removed adoptedStyleSheets push to avoid CSSStyleSheet conversion errors across browsers
+        </script>
 </head>
 <body>
     <div class="container">
         <header>
             <h1>Universal Image Search</h1>
             <div class="search-box">
-                <input type="text" id="searchInput" placeholder="Search for any images...">
-                <button id="searchButton">Search</button>
+                <md-filled-text-field
+                  label="Search for images"
+                  id="search-input"
+                  type="search"
+                  autofocus
+                  class="search-input-field">
+                </md-filled-text-field>
+                <md-filled-button id="search-button">
+                  Search
+                </md-filled-button>
             </div>
+            <div class="category-filters" id="categoryFilters">
+                </div>
         </header>
-        <div id="loading" class="loading hidden">Searching</div>
-        <div id="results" class="results-grid"></div>
+
+        <main>
+            <div id="results" class="results-grid"></div>
+            <div id="skeleton-loader" class="results-grid skeleton-grid hidden">
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+                <div class="image-card-skeleton"></div>
+            </div>
+            <div id="loading" class="loading hidden">Searching...</div>
+        </main>
     </div>
 
-    <!-- Enhanced Modal -->
-    <div id="imageModal" class="modal">
-        <span class="close-modal">&times;</span>
+    <div id="imageModal" class="modal-scrim">
         <div class="modal-content">
-            <div class="modal-nav modal-prev"></div>
-            <div class="modal-image-container">
-                <img id="modalImage" class="modal-image" src="" alt="">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <h2 id="modalImageTitle">Image Title</h2>
+                    <p id="modalImageResolution">1920 x 1080</p>
+                </div>
+                <md-icon-button class="close-modal" id="closeModalBtn">
+                    <span class="material-symbols-outlined">close</span>
+                </md-icon-button>
             </div>
-            <div class="modal-nav modal-next"></div>
+
+            <div class="modal-body">
+                 <md-icon-button class="modal-nav modal-prev">
+                    <span class="material-symbols-outlined">arrow_back_ios</span>
+                </md-icon-button>
+                <div class="modal-image-container">
+                    <img id="modalImage" class="modal-image" src="" alt="Enlarged view">
+                </div>
+                <md-icon-button class="modal-nav modal-next">
+                    <span class="material-symbols-outlined">arrow_forward_ios</span>
+                </md-icon-button>
+            </div>
+
+            <div class="modal-actions">
+                <md-filled-tonal-button id="modalShareBtn">
+                    <span slot="icon" class="material-symbols-outlined">share</span>
+                    Share
+                </md-filled-tonal-button>
+                <md-filled-button id="modalDownloadBtn">
+                    <span slot="icon" class="material-symbols-outlined">download</span>
+                    Download
+                </md-filled-button>
+            </div>
         </div>
     </div>
-
+    
     <script src="script.js"></script>
 </body>
 </html>

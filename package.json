@@ -1,0 +1,20 @@
+{
+  "name": "images-search",
+  "private": true,
+  "scripts": {
+  "start": "node server.js",
+  "api": "node api.js",
+  "web": "node static.js",
+  "dev": "concurrently \"npm:start\" \"npm:api\" \"npm:web\""
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "cors-anywhere": "^0.4.4",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
