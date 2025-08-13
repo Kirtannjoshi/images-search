@@ -55,6 +55,26 @@ document.addEventListener('DOMContentLoaded', () => {
             const API_BASE = isLocal ? 'http://localhost:3001' : '';
             const PROXY_BASE = isLocal ? 'http://localhost:8080/' : '';
 
+            // Session storage cache (persists during tab session)
+            const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+            function loadFromSession(key) {
+                try {
+                    const raw = sessionStorage.getItem(key);
+                    if (!raw) return null;
+                    const obj = JSON.parse(raw);
+                    if (Date.now() - obj.t > CACHE_TTL_MS) {
+                        sessionStorage.removeItem(key);
+                        return null;
+                    }
+                    return obj.v;
+                } catch { return null; }
+            }
+            function saveToSession(key, value) {
+                try {
+                    sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value }));
+                } catch {}
+            }
+
             // Load favorites from memory (since localStorage is not available)
             let favoritesData = [];
 
@@ -130,10 +150,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                // Check cache first for performance
+                // Check cache first for performance (in-memory, then sessionStorage)
                 const cacheKey = `${query}-${page}`;
-                if (searchCache.has(cacheKey)) {
-                    const cachedResults = searchCache.get(cacheKey);
+                let cachedResults = searchCache.get(cacheKey) || loadFromSession(cacheKey);
+                if (cachedResults) {
+                    searchCache.set(cacheKey, cachedResults); // refresh in-memory
                     if (page === 1) {
                         resultsDiv.innerHTML = '';
                         allImages = [];
@@ -187,6 +208,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             Promise.race([
                                 searchWikimediaCommons(query, page),
                                 new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2500 : 1400))
+                            ]),
+                            Promise.race([
+                                searchOpenverse(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2200 : 1200))
                             ])
                         ];
 
@@ -202,9 +227,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const uniqueImages = removeDuplicateImages(allValidImages);
                     const sortedImages = sortImagesByQuality(uniqueImages);
 
-                    // Cache results for faster subsequent searches
+                    // Cache results for faster subsequent searches (memory + session)
                     if (sortedImages.length > 0) {
-                        searchCache.set(cacheKey, sortedImages.slice(0, 24));
+                        const toStore = sortedImages.slice(0, 24);
+                        searchCache.set(cacheKey, toStore);
+                        saveToSession(cacheKey, toStore);
                     }
 
                     const sliceCount = isLocal ? 24 : 18; // show fewer initially on hosted for faster paint
@@ -400,7 +427,8 @@ document.addEventListener('DOMContentLoaded', () => {
             async function searchWikimediaCommons(query, page = 1) {
                 try {
                     const gsroffset = (page - 1) * 24;
-                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=24&prop=imageinfo&iiprop=url%7Csize&format=json&origin=*${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
+                    // Request thumbnail to improve first paint; sort by relevance
+                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=24&gsrsort=relevance&prop=imageinfo&format=json&origin=*&iiprop=url%7Csize&iiurlwidth=400${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
                     const response = await fetch(url);
                     if (!response.ok) throw new Error('Wikimedia API failed');
                     const data = await response.json();
@@ -409,8 +437,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         .map(p => {
                             const ii = p.imageinfo && p.imageinfo[0];
                             if (!ii || !ii.url) return null;
+                            const preview = ii.thumburl || ii.url;
                             return {
                                 highQualityUrl: ii.url,
+                                previewUrl: preview,
                                 alt: p.title.replace('File:', '').replace(/_/g, ' '),
                                 dimensions: { width: ii.width || 1024, height: ii.height || 768 },
                                 source: 'wikimedia'
@@ -419,6 +449,31 @@ document.addEventListener('DOMContentLoaded', () => {
                         .filter(Boolean);
                 } catch (e) {
                     console.log('Wikimedia search failed:', e);
+                    return [];
+                }
+            }
+
+            // Openverse (no key, CORS-friendly): https://api.openverse.engineering/v1/
+            async function searchOpenverse(query, page = 1) {
+                try {
+                    const pageSize = 24;
+                    const url = `https://api.openverse.engineering/v1/images?q=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`;
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), isLocal ? 4000 : 1800);
+                    const resp = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timeout);
+                    if (!resp.ok) throw new Error('Openverse failed');
+                    const data = await resp.json();
+                    const results = (data.results || []).map(item => ({
+                        highQualityUrl: item.url,
+                        previewUrl: item.thumbnail || item.url,
+                        alt: item.title || item.foreign_landing_url || query,
+                        dimensions: { width: item.width || 1200, height: item.height || 800 },
+                        source: 'openverse'
+                    }));
+                    return results;
+                } catch (e) {
+                    console.log('Openverse search failed:', e);
                     return [];
                 }
             }
@@ -439,10 +494,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
 
-            function sortImagesByQuality(images) {
+        function sortImagesByQuality(images) {
                 return images.sort((a, b) => {
                     // Prioritize by source reliability and image dimensions
-                    const sourceWeight = { google: 3, unsplash: 2, pixabay: 1, wikimedia: 1 };
+            const sourceWeight = { google: 3, unsplash: 2, openverse: 2, bing: 2, pixabay: 1, wikimedia: 1 };
                     const aW = (a.dimensions?.width || 0), aH = (a.dimensions?.height || 0);
                     const bW = (b.dimensions?.width || 0), bH = (b.dimensions?.height || 0);
                     const aScore = (sourceWeight[a.source] || 0) * 1000 + (aW * aH);
@@ -463,7 +518,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         card.innerHTML = `
                     <div class="aspect-ratio-box" style="padding-bottom: ${Math.min(aspectRatio * 100, 150)}%;">
-            <img src="${imgData.highQualityUrl}" alt="${imgData.alt}" loading="${index < 6 ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer" 
+            <img src="${imgData.previewUrl || imgData.highQualityUrl}" data-fullsrc="${imgData.highQualityUrl}" alt="${imgData.alt}" loading="${index < 6 ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer" 
                              onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
                     </div>
                     <div class="image-info">
@@ -481,9 +536,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const currentIndex = allImages.length;
                 const img = card.querySelector('img');
-                // Fade-in on load
+                // Fade-in on load, then upgrade to full image if preview was used
                 img.addEventListener('load', () => {
                     img.classList.add('loaded');
+                    if (img.dataset.fullsrc && img.src !== img.dataset.fullsrc) {
+                        const full = new Image();
+                        full.decoding = 'async';
+                        full.loading = 'lazy';
+                        full.referrerPolicy = 'no-referrer';
+                        full.onload = () => { img.src = img.dataset.fullsrc; };
+                        full.src = img.dataset.fullsrc;
+                    }
                 }, { once: true });
 
                 // Preload first few images for faster display
