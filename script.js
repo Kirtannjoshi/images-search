@@ -69,6 +69,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     return obj.v;
                 } catch { return null; }
             }
+            // Simple relevance scoring using token overlap (Jaccard)
+            function tokenize(s) {
+                return new Set((s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean));
+            }
+            function jaccard(a, b) {
+                if (!a.size || !b.size) return 0;
+                let inter = 0;
+                for (const t of a) if (b.has(t)) inter++;
+                return inter / (a.size + b.size - inter);
+            }
+            function relevanceScore(query, item) {
+                const q = tokenize(query);
+                const t = tokenize(`${item.alt || ''} ${item.highQualityUrl || ''}`);
+                return jaccard(q, t); // 0..1
+            }
             function saveToSession(key, value) {
                 try {
                     sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), v: value }));
@@ -500,8 +515,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const sourceWeight = { google: 3, unsplash: 2, openverse: 2, bing: 2, pixabay: 1, wikimedia: 1 };
                     const aW = (a.dimensions?.width || 0), aH = (a.dimensions?.height || 0);
                     const bW = (b.dimensions?.width || 0), bH = (b.dimensions?.height || 0);
-                    const aScore = (sourceWeight[a.source] || 0) * 1000 + (aW * aH);
-                    const bScore = (sourceWeight[b.source] || 0) * 1000 + (bW * bH);
+            const aBase = (sourceWeight[a.source] || 0) * 1000 + (aW * aH);
+            const bBase = (sourceWeight[b.source] || 0) * 1000 + (bW * bH);
+            // In hosted mode give relevance a stronger weight to better match the query
+            const aRel = relevanceScore(searchInput.value || '', a) * (isLocal ? 300 : 600);
+            const bRel = relevanceScore(searchInput.value || '', b) * (isLocal ? 300 : 600);
+            const aScore = aBase + aRel;
+            const bScore = bBase + bRel;
                     return bScore - aScore;
                 });
             }
@@ -805,6 +825,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initial load
         showWelcomeMessage();
         setupCategoryFilters();
+
+        // Hosted mode info banner
+        if (!isLocal) {
+            const note = document.createElement('div');
+            note.style.cssText = 'margin-top:8px;font-size:12px;opacity:.7;text-align:center;';
+            note.innerHTML = 'Hosted mode uses public sources (Wikimedia/Openverse). For more results and providers, run locally.';
+            document.querySelector('header')?.appendChild(note);
+        }
 
         // Load more images on scroll
     window.addEventListener('scroll', debounce(() => {
