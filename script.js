@@ -434,61 +434,35 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                     
-                    // If REST API is disabled or returned no results, fallback to client-side scraping
+                    // If REST API is disabled or returned no results, fallback to client-side sources
                     if (!USE_REST_API || allValidImages.length === 0) {
-                        console.log('📡 Using client-side fallback sources...');
+                        console.log('📡 Using client-side API sources...');
+                        
+                        // Only use API-based sources that work without a backend server
                         const searchPromises = [
                             Promise.race([
-                                searchGoogleImages(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
-                            ]),
-                            Promise.race([
-                                searchBingImages(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
-                            ]),
-                            Promise.race([
-                                searchDuckDuckGo(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
-                            ]),
-                            Promise.race([
                                 searchReddit(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 3000 : 2000))
-                            ]),
-                            Promise.race([
-                                searchPinterest(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
-                            ]),
-                            Promise.race([
-                                searchInstagram(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
-                            ]),
-                            Promise.race([
-                                searchFacebook(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
+                                new Promise(resolve => setTimeout(() => resolve([]), 2000))
                             ]),
                             Promise.race([
                                 searchUnsplash(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1200))
+                                new Promise(resolve => setTimeout(() => resolve([]), 1200))
                             ]),
                             Promise.race([
                                 searchPixabay(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1200))
+                                new Promise(resolve => setTimeout(() => resolve([]), 1200))
                             ]),
                             Promise.race([
                                 searchPexels(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1500))
-                            ]),
-                            Promise.race([
-                                searchFlickr(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2200 : 1500))
+                                new Promise(resolve => setTimeout(() => resolve([]), 1500))
                             ]),
                             Promise.race([
                                 searchWikimediaCommons(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2500 : 1400))
+                                new Promise(resolve => setTimeout(() => resolve([]), 1400))
                             ]),
                             Promise.race([
                                 searchOpenverse(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2200 : 1200))
+                                new Promise(resolve => setTimeout(() => resolve([]), 1200))
                             ])
                         ];
 
@@ -498,11 +472,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         const priorityImages = [];
                         const otherImages = [];
                         
-                        // IMPORTANT: This order MUST match the searchPromises array above!
-                        // Order: Google, Bing, DuckDuckGo, Reddit, Pinterest, Instagram, Facebook, Unsplash, Pixabay, Pexels, Flickr, Wikimedia, Openverse
-                        const sourceNames = ['google', 'bing', 'duckduckgo', 'reddit', 'pinterest', 'instagram', 'facebook', 'unsplash', 'pixabay', 'pexels', 'flickr', 'wikimedia', 'openverse'];
-                        const sourceDisplayNames = ['Google', 'Bing', 'DuckDuckGo', 'Reddit', 'Pinterest', 'Instagram', 'Facebook', 'Unsplash', 'Pixabay', 'Pexels', 'Flickr', 'Wikimedia', 'Openverse'];
-                        const prioritySourcesList = ['google', 'bing', 'duckduckgo', 'reddit', 'pinterest', 'instagram', 'facebook'];
+                        // Source names MUST match the searchPromises array order!
+                        // Order: Reddit, Unsplash, Pixabay, Pexels, Wikimedia, Openverse
+                        const sourceNames = ['reddit', 'unsplash', 'pixabay', 'pexels', 'wikimedia', 'openverse'];
+                        const sourceDisplayNames = ['Reddit', 'Unsplash', 'Pixabay', 'Pexels', 'Wikimedia', 'Openverse'];
+                        const prioritySourcesList = ['reddit', 'unsplash']; // Reddit and Unsplash are priority
                         
                         let totalFound = 0;
                         let successCount = 0;
@@ -2047,7 +2021,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isLocal) {
             const note = document.createElement('div');
             note.style.cssText = 'margin-top:8px;font-size:12px;opacity:.7;text-align:center;';
-            note.innerHTML = 'Hosted mode uses public sources (Wikimedia/Openverse). For more results and providers, run locally.';
+            note.innerHTML = 'Hosted mode uses free API sources: Reddit, Unsplash, Pexels, Pixabay, Wikimedia, Openverse. <a href="https://github.com/Kirtannjoshi/images-search#readme" target="_blank" style="color:#4a9eff;">Run locally</a> for Google Images scraping (90+ results).';
             document.querySelector('header')?.appendChild(note);
         }
 
