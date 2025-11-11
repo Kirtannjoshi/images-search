@@ -229,21 +229,26 @@ async function searchBingImages(query, page = 1, timeoutMs = 5000) {
 app.get('/api/search', async (req, res) => {
   const query = (req.query.q || req.query.query || '').toString().trim();
   const page = parseInt(req.query.page || '1', 10) || 1;
+  const sourcesParam = (req.query.sources || '').toString().trim();
+  const selected = sourcesParam ? new Set(sourcesParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)) : null;
   if (!query) return res.status(400).json({ error: 'Missing q' });
 
   const cacheKey = `${query}|${page}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json({ query, page, results: cached, cached: true });
 
-  const results = await Promise.allSettled([
-    searchGoogleImages(query, page, 6000),
-    searchBingImages(query, page, 6000),
-    searchDuckDuckGoImages(query, page, 5000),
-    searchUnsplashScrape(query, page, 6000),
-    searchFlickrPublic(query, 5000),
-  ]);
+  const providers = [
+    ['google', searchGoogleImages(query, page, 6000)],
+    ['bing', searchBingImages(query, page, 6000)],
+    ['duckduckgo', searchDuckDuckGoImages(query, page, 5000)],
+    ['unsplash', searchUnsplashScrape(query, page, 6000)],
+    ['flickr', searchFlickrPublic(query, 5000)],
+  ];
+  const active = selected ? providers.filter(([name]) => selected.has(name)) : providers;
+  const results = await Promise.allSettled(active.map(([, p]) => p));
   let all = [];
-  for (const r of results) {
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
     if (r.status === 'fulfilled' && Array.isArray(r.value)) all.push(...r.value);
   }
   all = dedupe(all);

@@ -1,1 +1,20 @@
-node_modules
+# Node modules
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# API server (not needed for GitHub Pages)
+api-server.js
+
+# Environment
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

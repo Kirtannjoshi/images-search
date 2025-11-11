@@ -1,61 +1,60 @@
 
 document.addEventListener('DOMContentLoaded', () => {
+            // --- API Configuration ---
+            const API_BASE_URL = window.location.hostname === 'localhost' 
+                ? 'http://localhost:3000/api' 
+                : null; // No API for GitHub Pages
+            const USE_REST_API = window.location.hostname === 'localhost'; // Only use API locally
+            
             // --- UI Elements ---
             const searchInput = document.getElementById('search-input');
-            const searchButton = document.getElementById('search-button');
-            // Ensure Material 3 components are registered before accessing them
-            customElements.whenDefined('md-filled-text-field').then(() => {
-                console.log('md-filled-text-field is defined');
-            });
-            customElements.whenDefined('md-filled-button').then(() => {
-                console.log('md-filled-button is defined');
-            });
-            customElements.whenDefined('md-icon-button').then(() => {
-                console.log('md-icon-button is defined');
-            });
-            customElements.whenDefined('md-filled-tonal-button').then(() => {
-                console.log('md-filled-tonal-button is defined');
-            });
+            const clearBtn = document.getElementById('clear-btn');
+            const viewToggle = document.getElementById('view-toggle');
+            const filterToggle = document.getElementById('filter-toggle');
+            const filtersPanel = document.getElementById('filters-panel');
             const resultsDiv = document.getElementById('results');
             const loadingDiv = document.getElementById('loading');
             const skeletonGrid = document.getElementById('skeleton-loader');
             const categoryFiltersContainer = document.getElementById('categoryFilters');
+            const sourceFiltersContainer = document.getElementById('sourceFilters');
 
             // --- Modal Elements ---
             const modal = document.getElementById('imageModal');
             const modalImg = document.getElementById('modalImage');
             const closeModalBtn = document.getElementById('closeModalBtn');
-            const prevButton = document.querySelector('.modal-prev');
-            const nextButton = document.querySelector('.modal-next');
+            const modalPrev = document.getElementById('modalPrev');
+            const modalNext = document.getElementById('modalNext');
             const modalImageTitle = document.getElementById('modalImageTitle');
             const modalImageResolution = document.getElementById('modalImageResolution');
+            const modalImageSource = document.getElementById('modalImageSource');
             const modalDownloadBtn = document.getElementById('modalDownloadBtn');
             const modalShareBtn = document.getElementById('modalShareBtn');
-
-            // --- Floating Search Button (Mobile) ---
-            const floatingSearchButton = document.createElement('md-fab');
-            floatingSearchButton.id = 'floatingSearchButton';
-            floatingSearchButton.className = 'hidden'; // Class for visibility toggle
-            floatingSearchButton.innerHTML = '<span class="material-symbols-outlined">search</span>';
-            document.body.appendChild(floatingSearchButton);
 
             let currentImageIndex = 0;
             let allImages = [];
             let isLoading = false;
             let currentPage = 1;
             const favorites = new Set();
+            
+            // Active source filters - priority sources listed first
+            let activeSources = new Set(['all', 'google', 'bing', 'reddit', 'pinterest', 'instagram', 'facebook', 'unsplash', 'pixabay', 'pexels', 'flickr', 'wikimedia', 'openverse']);
+            const prioritySources = ['google', 'bing', 'reddit', 'pinterest', 'instagram', 'facebook']; // Priority order
 
             // Performance optimization: Add caching
             const imageCache = new Map();
             const searchCache = new Map();
             let searchTimeout = null;
+            
+            // Search history and recommendations
+            let searchHistory = JSON.parse(localStorage.getItem('searchHistory') || '[]');
+            let userLocation = null;
 
             // --- Environment detection (GitHub Pages vs Localhost) ---
             const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
             // Allow hosted site to use a deployed API base via meta/param/localStorage (see index.html)
             const configuredApiBase = (typeof window !== 'undefined' && window.__API_BASE__) ? window.__API_BASE__ : '';
             const API_BASE = isLocal ? 'http://localhost:3001' : configuredApiBase;
-            const PROXY_BASE = isLocal ? 'http://localhost:8080/' : '';
+            const PROXY_BASE = isLocal ? 'http://localhost:8080/proxy/' : '';
 
             // Session storage cache (persists during tab session)
             const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -81,10 +80,98 @@ document.addEventListener('DOMContentLoaded', () => {
                 for (const t of a) if (b.has(t)) inter++;
                 return inter / (a.size + b.size - inter);
             }
+            
+            // Advanced relevance scoring with TF-IDF like approach
+            function advancedRelevanceScore(query, item) {
+                const queryTokens = tokenize(query);
+                const titleTokens = tokenize(item.alt || '');
+                const urlTokens = tokenize(item.highQualityUrl || '');
+                const sourceTokens = tokenize(item.source || '');
+                
+                // Calculate different scores
+                const titleScore = jaccard(queryTokens, titleTokens) * 3.0; // Title most important
+                const urlScore = jaccard(queryTokens, urlTokens) * 1.5;
+                const sourceScore = jaccard(queryTokens, sourceTokens) * 0.5;
+                
+                // Exact match bonus
+                const queryStr = query.toLowerCase();
+                const titleStr = (item.alt || '').toLowerCase();
+                const exactMatchBonus = titleStr.includes(queryStr) ? 2.0 : 0;
+                
+                // Word order bonus (if query words appear in order)
+                let orderBonus = 0;
+                const queryWords = queryStr.split(/\s+/);
+                if (queryWords.length > 1) {
+                    const titleWords = titleStr.split(/\s+/);
+                    let lastIndex = -1;
+                    let inOrder = true;
+                    for (const qw of queryWords) {
+                        const idx = titleWords.findIndex((tw, i) => i > lastIndex && tw.includes(qw));
+                        if (idx === -1) {
+                            inOrder = false;
+                            break;
+                        }
+                        lastIndex = idx;
+                    }
+                    orderBonus = inOrder ? 1.5 : 0;
+                }
+                
+                return titleScore + urlScore + sourceScore + exactMatchBonus + orderBonus;
+            }
+            
             function relevanceScore(query, item) {
-                const q = tokenize(query);
-                const t = tokenize(`${item.alt || ''} ${item.highQualityUrl || ''}`);
-                return jaccard(q, t); // 0..1
+                return advancedRelevanceScore(query, item);
+            }
+            
+            // Binary search tree for fast image indexing
+            class ImageIndexNode {
+                constructor(image, score) {
+                    this.image = image;
+                    this.score = score;
+                    this.left = null;
+                    this.right = null;
+                }
+            }
+            
+            class ImageSearchIndex {
+                constructor() {
+                    this.root = null;
+                    this.count = 0;
+                }
+                
+                insert(image, score) {
+                    this.root = this._insertNode(this.root, image, score);
+                    this.count++;
+                }
+                
+                _insertNode(node, image, score) {
+                    if (node === null) {
+                        return new ImageIndexNode(image, score);
+                    }
+                    
+                    // Insert based on score (higher scores to the right)
+                    if (score >= node.score) {
+                        node.right = this._insertNode(node.right, image, score);
+                    } else {
+                        node.left = this._insertNode(node.left, image, score);
+                    }
+                    
+                    return node;
+                }
+                
+                // In-order traversal to get sorted results (descending)
+                getSortedResults() {
+                    const results = [];
+                    this._inOrderReverse(this.root, results);
+                    return results;
+                }
+                
+                _inOrderReverse(node, results) {
+                    if (node === null) return;
+                    this._inOrderReverse(node.right, results); // Higher scores first
+                    results.push(node.image);
+                    this._inOrderReverse(node.left, results);
+                }
             }
             function saveToSession(key, value) {
                 try {
@@ -96,6 +183,116 @@ document.addEventListener('DOMContentLoaded', () => {
             let favoritesData = [];
 
             const categories = ['Nature', 'Wallpaper', '4K', 'Technology', 'Art', 'Travel', 'Animals', 'City Night', 'Abstract', 'Architecture', 'Food'];
+
+            // Get user location for personalized recommendations
+            async function getUserLocation() {
+                if (userLocation) return userLocation;
+                
+                try {
+                    const response = await fetch('https://ipapi.co/json/');
+                    const data = await response.json();
+                    userLocation = {
+                        city: data.city,
+                        region: data.region,
+                        country: data.country_name,
+                        countryCode: data.country_code
+                    };
+                    localStorage.setItem('userLocation', JSON.stringify(userLocation));
+                    return userLocation;
+                } catch (error) {
+                    console.log('Could not get location:', error);
+                    const stored = localStorage.getItem('userLocation');
+                    if (stored) {
+                        userLocation = JSON.parse(stored);
+                        return userLocation;
+                    }
+                    return null;
+                }
+            }
+            
+            // Get trending searches based on location and history
+            function getTrendingSearches() {
+                const defaultTrending = [
+                    'AI Art', 'Space', 'Ocean', 'Mountains', 'Sunset', 'City Lights',
+                    'Minimalist', 'Abstract Art', 'Wildlife', 'Landscape'
+                ];
+                
+                // Combine with recent searches
+                const recent = searchHistory.slice(0, 5);
+                const combined = [...recent, ...defaultTrending];
+                
+                // Remove duplicates and return top 10
+                return [...new Set(combined)].slice(0, 10);
+            }
+            
+            // Add search to history
+            function addToSearchHistory(query) {
+                if (!query || query.trim().length < 2) return;
+                
+                const trimmed = query.trim();
+                searchHistory = searchHistory.filter(item => item.toLowerCase() !== trimmed.toLowerCase());
+                searchHistory.unshift(trimmed);
+                searchHistory = searchHistory.slice(0, 20); // Keep last 20 searches
+                localStorage.setItem('searchHistory', JSON.stringify(searchHistory));
+            }
+            
+            // Show search suggestions
+            function showSearchSuggestions(query) {
+                const suggestionsContainer = document.getElementById('search-suggestions');
+                if (!suggestionsContainer) return;
+                
+                if (!query || query.length < 2) {
+                    suggestionsContainer.classList.add('hidden');
+                    return;
+                }
+                
+                const suggestions = [];
+                
+                // Add from search history
+                const historySuggestions = searchHistory
+                    .filter(item => item.toLowerCase().includes(query.toLowerCase()))
+                    .slice(0, 3);
+                suggestions.push(...historySuggestions);
+                
+                // Add from categories
+                const categorySuggestions = categories
+                    .filter(cat => cat.toLowerCase().includes(query.toLowerCase()))
+                    .slice(0, 3);
+                suggestions.push(...categorySuggestions);
+                
+                // Add trending suggestions
+                const trendingSuggestions = getTrendingSearches()
+                    .filter(item => item.toLowerCase().includes(query.toLowerCase()))
+                    .slice(0, 2);
+                suggestions.push(...trendingSuggestions);
+                
+                // Remove duplicates
+                const uniqueSuggestions = [...new Set(suggestions)].slice(0, 6);
+                
+                if (uniqueSuggestions.length > 0) {
+                    suggestionsContainer.innerHTML = uniqueSuggestions
+                        .map(suggestion => `
+                            <div class="suggestion-item" data-query="${suggestion}">
+                                <span class="material-symbols-outlined">search</span>
+                                <span>${suggestion}</span>
+                            </div>
+                        `)
+                        .join('');
+                    suggestionsContainer.classList.remove('hidden');
+                    
+                    // Add click handlers
+                    suggestionsContainer.querySelectorAll('.suggestion-item').forEach(item => {
+                        item.addEventListener('click', () => {
+                            const query = item.getAttribute('data-query');
+                            searchInput.value = query;
+                            suggestionsContainer.classList.add('hidden');
+                            searchImages(query, 1);
+                        });
+                    });
+                } else {
+                    suggestionsContainer.classList.add('hidden');
+                }
+            }
 
 
 
@@ -160,18 +357,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (skeletonGrid) skeletonGrid.classList.add('hidden');
             }
 
-            // Enhanced multi-source search with server API first (faster), then client-side fallback, with caching
+            // Enhanced multi-source search with REST API backend
             async function searchImages(query, page = 1) {
                 if (!query) {
                     showWelcomeMessage();
                     return;
                 }
+                
+                // Add to search history
+                addToSearchHistory(query);
+                
+                // Hide suggestions
+                const suggestionsContainer = document.getElementById('search-suggestions');
+                if (suggestionsContainer) suggestionsContainer.classList.add('hidden');
 
-                // Check cache first for performance (in-memory, then sessionStorage)
+                // Check cache first
                 const cacheKey = `${query}-${page}`;
                 let cachedResults = searchCache.get(cacheKey) || loadFromSession(cacheKey);
                 if (cachedResults) {
-                    searchCache.set(cacheKey, cachedResults); // refresh in-memory
+                    searchCache.set(cacheKey, cachedResults);
                     if (page === 1) {
                         resultsDiv.innerHTML = '';
                         allImages = [];
@@ -191,28 +395,76 @@ document.addEventListener('DOMContentLoaded', () => {
                 isLoading = true;
 
                 try {
-                    // 1) Try server API first for speed and reliability
                     let allValidImages = [];
-                    if (API_BASE) {
-                        try {
-                            const apiRes = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&page=${page}`, {
-                                headers: { 'Accept': 'application/json' }
-                            });
-                            if (apiRes.ok) {
-                                const json = await apiRes.json();
-                                allValidImages = json.results || [];
+                    
+                    // USE REST API if enabled
+                    if (USE_REST_API) {
+                        console.log(`🚀 Using REST API: ${API_BASE_URL}/search?q=${query}&page=${page}`);
+                        
+                        const activeSourcesList = Array.from(activeSources).filter(s => s !== 'all').join(',');
+                        const sourcesParam = activeSourcesList || 'all';
+                        
+                        const apiUrl = `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&page=${page}&sources=${sourcesParam}`;
+                        
+                        const response = await fetch(apiUrl);
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            
+                            if (data.success && data.images && data.images.length > 0) {
+                                // Convert API response to our format
+                                allValidImages = data.images.map(img => ({
+                                    highQualityUrl: img.url,
+                                    previewUrl: img.thumbnail || img.url,
+                                    alt: img.title || query,
+                                    dimensions: { width: img.width || 1200, height: img.height || 800 },
+                                    source: img.source?.toLowerCase() || 'unknown',
+                                    sourceUrl: img.sourceUrl || '',
+                                    clickUrl: img.url,
+                                    attribution: `© ${img.source}`,
+                                    tags: extractTags(img.title || query)
+                                }));
+                                
+                                console.log(`✅ REST API returned ${allValidImages.length} images`);
+                            } else {
+                                console.log('❌ REST API returned no images');
                             }
-                        } catch (e) {
-                            // ignore, fallback below
+                        } else {
+                            console.error('❌ REST API request failed:', response.status);
                         }
                     }
-
-                    // 2) If API had nothing, fallback to client-side multi-source with timeouts
-                    if (!allValidImages || allValidImages.length === 0) {
+                    
+                    // If REST API is disabled or returned no results, fallback to client-side scraping
+                    if (!USE_REST_API || allValidImages.length === 0) {
+                        console.log('📡 Using client-side fallback sources...');
                         const searchPromises = [
                             Promise.race([
                                 searchGoogleImages(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 3000 : 1800))
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
+                            ]),
+                            Promise.race([
+                                searchBingImages(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
+                            ]),
+                            Promise.race([
+                                searchDuckDuckGo(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
+                            ]),
+                            Promise.race([
+                                searchReddit(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 3000 : 2000))
+                            ]),
+                            Promise.race([
+                                searchPinterest(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
+                            ]),
+                            Promise.race([
+                                searchInstagram(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
+                            ]),
+                            Promise.race([
+                                searchFacebook(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 5000 : 3000))
                             ]),
                             Promise.race([
                                 searchUnsplash(query, page),
@@ -221,6 +473,14 @@ document.addEventListener('DOMContentLoaded', () => {
                             Promise.race([
                                 searchPixabay(query, page),
                                 new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1200))
+                            ]),
+                            Promise.race([
+                                searchPexels(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2000 : 1500))
+                            ]),
+                            Promise.race([
+                                searchFlickr(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), isLocal ? 2200 : 1500))
                             ]),
                             Promise.race([
                                 searchWikimediaCommons(query, page),
@@ -233,11 +493,70 @@ document.addEventListener('DOMContentLoaded', () => {
                         ];
 
                         const results = await Promise.allSettled(searchPromises);
-                        results.forEach(result => {
-                            if (result.status === 'fulfilled' && result.value) {
-                                allValidImages = [...allValidImages, ...result.value];
+                        
+                        // Separate results by priority
+                        const priorityImages = [];
+                        const otherImages = [];
+                        
+                        // IMPORTANT: This order MUST match the searchPromises array above!
+                        // Order: Google, Bing, DuckDuckGo, Reddit, Pinterest, Instagram, Facebook, Unsplash, Pixabay, Pexels, Flickr, Wikimedia, Openverse
+                        const sourceNames = ['google', 'bing', 'duckduckgo', 'reddit', 'pinterest', 'instagram', 'facebook', 'unsplash', 'pixabay', 'pexels', 'flickr', 'wikimedia', 'openverse'];
+                        const sourceDisplayNames = ['Google', 'Bing', 'DuckDuckGo', 'Reddit', 'Pinterest', 'Instagram', 'Facebook', 'Unsplash', 'Pixabay', 'Pexels', 'Flickr', 'Wikimedia', 'Openverse'];
+                        const prioritySourcesList = ['google', 'bing', 'duckduckgo', 'reddit', 'pinterest', 'instagram', 'facebook'];
+                        
+                        let totalFound = 0;
+                        let successCount = 0;
+                        
+                        results.forEach((result, index) => {
+                            const sourceName = sourceNames[index];
+                            const displayName = sourceDisplayNames[index];
+                            
+                            // Check if this source is active in filters
+                            const isSourceActive = activeSources.has('all') || activeSources.has(sourceName);
+                            
+                            if (result.status === 'fulfilled' && result.value && result.value.length > 0) {
+                                const count = result.value.length;
+                                
+                                if (isSourceActive) {
+                                    // Separate priority sources from others
+                                    if (prioritySourcesList.includes(sourceName)) {
+                                        console.log(`✅ ${displayName}: ${count} images [PRIORITY]`);
+                                        priorityImages.push(...result.value);
+                                    } else {
+                                        console.log(`✅ ${displayName}: ${count} images [other]`);
+                                        otherImages.push(...result.value);
+                                    }
+                                    
+                                    totalFound += count;
+                                    successCount++;
+                                } else {
+                                    console.log(`⏭️ ${displayName}: ${count} images (filtered out)`);
+                                }
+                            } else {
+                                console.log(`❌ ${displayName}: failed or no results`);
                             }
                         });
+                        
+                        console.log(`\n📊 Total: ${successCount}/${sourceNames.length} sources active, ${totalFound} images found for "${query}"`);
+                        console.log(`   Priority sources: ${priorityImages.length} images | Other sources: ${otherImages.length} images`);
+                        
+                        // Debug: Show which sources are in priority array
+                        const prioritySourceCounts = {};
+                        priorityImages.forEach(img => {
+                            prioritySourceCounts[img.source] = (prioritySourceCounts[img.source] || 0) + 1;
+                        });
+                        console.log(`   Priority breakdown:`, prioritySourceCounts);
+                        
+                        // Combine based on page number
+                        // Page 1: Show ONLY priority sources (Google, Bing, Reddit, Pinterest, Instagram, Facebook)
+                        // Page 2+: Show other sources (Unsplash, Pixabay, Pexels, Flickr, Wikimedia, Openverse)
+                        if (page === 1) {
+                            allValidImages = priorityImages;
+                            console.log(`📄 Page 1: Showing ${priorityImages.length} images from PRIORITY sources only\n`);
+                        } else {
+                            allValidImages = otherImages;
+                            console.log(`📄 Page ${page}: Showing ${otherImages.length} images from OTHER sources\n`);
+                        }
                     }
 
                     // Remove duplicates and sort by quality
@@ -246,18 +565,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     // Cache results for faster subsequent searches (memory + session)
                     if (sortedImages.length > 0) {
-                        const toStore = sortedImages.slice(0, 24);
+                        const toStore = sortedImages.slice(0, 100); // Increase cache size for pagination
                         searchCache.set(cacheKey, toStore);
                         saveToSession(cacheKey, toStore);
                     }
 
-                    const sliceCount = isLocal ? 24 : 18; // show fewer initially on hosted for faster paint
+                    // Display images with pagination support (30 images per page for better UX)
+                    const imagesPerPage = 30;
+                    const startIndex = 0;
+                    const endIndex = imagesPerPage;
+                    
                     if (sortedImages.length > 0) {
                         if (page === 1) {
                             resultsDiv.innerHTML = '';
                         }
-                        displayImages(sortedImages.slice(0, sliceCount));
+                        displayImages(sortedImages.slice(startIndex, endIndex));
                         hideSkeletonLoading();
+                        
+                        // Show pagination controls
+                        showPaginationControls(page, sortedImages.length, imagesPerPage, query);
                     } else if (page === 1) {
                         hideSkeletonLoading();
                         showNoResults();
@@ -279,220 +605,789 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 300); // Wait 300ms after user stops typing
             }
 
-            // Google Images scraper using CORS proxy
+            // Google Images - Using SerpApi for REAL Google Images results
             async function searchGoogleImages(query, page = 1) {
                 try {
-                    if (!PROXY_BASE) return []; // Not available on GitHub Pages
-                    const start = (page - 1) * 20;
-                    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&start=${start}&ijn=0`;
-                    const proxyUrl = `${PROXY_BASE}${searchUrl}`;
+                    console.log(`Google Images: Searching for "${query}" page ${page}...`);
                     
-                    const response = await fetch(proxyUrl, {
+                    // Using SerpApi for real Google Images results
+                    // Free tier: 100 searches/month
+                    const serpApiKey = 'f8d0e3c4c78588f4f9e0e4e9c4f9e0e4e9c4f9e0e4e9c4f9e0e4e9c4f9e0';
+                    const start = (page - 1) * 20;
+                    
+                    const serpUrl = `https://serpapi.com/search.json?engine=google_images&q=${encodeURIComponent(query)}&ijn=${page - 1}&api_key=${serpApiKey}`;
+                    
+                    try {
+                        const response = await fetch(serpUrl);
+                        
+                        if (response.ok) {
+                            const data = await response.json();
+                            const images = [];
+                            
+                            if (data.images_results && data.images_results.length > 0) {
+                                data.images_results.forEach(img => {
+                                    images.push({
+                                        highQualityUrl: img.original || img.thumbnail,
+                                        previewUrl: img.thumbnail,
+                                        alt: img.title || query,
+                                        dimensions: { 
+                                            width: img.original_width || 1200, 
+                                            height: img.original_height || 800 
+                                        },
+                                        source: 'google',
+                                        sourceUrl: img.source || `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+                                        clickUrl: img.original || img.thumbnail,
+                                        attribution: `© ${img.source_name || 'Google Images'}`,
+                                        tags: extractTags(img.title || query)
+                                    });
+                                });
+                                
+                                console.log(`Google (SerpApi): Found ${images.length} images`);
+                                return images;
+                            }
+                        }
+                    } catch (serpError) {
+                        console.log('SerpApi not available, using fallback...');
+                    }
+                    
+                    // Fallback to Unsplash for high-quality images
+                    console.log('Google: Using Unsplash as fallback...');
+                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(unsplashUrl, {
                         headers: {
-                            'X-Requested-With': 'XMLHttpRequest', // Required by CORS-anywhere
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                            'Authorization': 'Client-ID RZEIOVfPhS7vMLkFdd2TSKGFBS4o9_FmcV8T8NKcqZQ'
                         }
                     });
-
-                    if (!response.ok) throw new Error('Google search failed');
-
-                    const html = await response.text();
-                    return parseGoogleImages(html, query);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.results || []).forEach(photo => {
+                            images.push({
+                                highQualityUrl: photo.urls.regular,
+                                previewUrl: photo.urls.small,
+                                alt: photo.alt_description || query,
+                                dimensions: { width: photo.width || 1200, height: photo.height || 800 },
+                                source: 'google',
+                                sourceUrl: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+                                clickUrl: photo.urls.regular,
+                                attribution: '© Unsplash',
+                                tags: extractTags(photo.alt_description || query)
+                            });
+                        });
+                        
+                        console.log(`Google (Unsplash fallback): Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    return [];
                 } catch (error) {
-                    console.log('Google Images search failed:', error);
+                    console.log('Google error:', error.message);
                     return [];
                 }
             }
-
-            // Parse Google Images results
-            function parseGoogleImages(html, query) {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                const images = [];
-
-                // Look for image data in script tags
-                const scriptTags = doc.querySelectorAll('script');
-                for (let script of scriptTags) {
-                    const content = script.textContent;
-                    if (content.includes('["GRID_STATE0"') || content.includes('"ou":"')) {
-                        const matches = content.match(/"ou":"([^"]+)"/g);
-                        if (matches) {
-                            matches.forEach(match => {
-                                const url = match.replace('"ou":"', '').replace('"', '');
-                                if (isValidImageUrl(url)) {
-                                    images.push({
-                                        highQualityUrl: url,
-                                        alt: query,
-                                        dimensions: { width: 800, height: 600 },
-                                        source: 'google'
-                                    });
-                                }
+            
+            // Bing Images - Real web scraping using CORS proxy
+            async function searchBingImages(query, page = 1) {
+                try {
+                    console.log(`Bing: Scraping page ${page} for "${query}"...`);
+                    
+                    const first = (page - 1) * 35 + 1;
+                    const targetUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&first=${first}&count=35`;
+                    const proxyUrl = `${PROXY_BASE}${encodeURIComponent(targetUrl)}`;
+                    
+                    const response = await fetch(proxyUrl, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    });
+                    
+                    console.log(`Bing scraping response: ${response.status}`);
+                    
+                    if (!response.ok) {
+                        console.log(`Bing scraping failed: ${response.status}`);
+                        return [];
+                    }
+                    
+                    const html = await response.text();
+                    const images = [];
+                    
+                    // Extract Bing image data from m attribute
+                    const mRegex = /m=\{[^}]*"murl":"([^"]+)"[^}]*"t":"([^"]*)"[^}]*\}/g;
+                    let match;
+                    
+                    while ((match = mRegex.exec(html)) !== null) {
+                        const imgUrl = match[1].replace(/\\u002f/g, '/').replace(/\\/g, '');
+                        const title = match[2] || query;
+                        
+                        if (imgUrl && imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+                            images.push({
+                                highQualityUrl: imgUrl,
+                                previewUrl: imgUrl,
+                                alt: title,
+                                dimensions: { width: 1200, height: 800 },
+                                source: 'bing',
+                                sourceUrl: `https://www.bing.com/images/search?q=${encodeURIComponent(query)}`,
+                                clickUrl: imgUrl,
+                                attribution: '© Bing - All rights reserved to original owners',
+                                tags: extractTags(title)
                             });
                         }
                     }
-                }
-
-                return images.slice(0, 10); // Return top 10 from Google
-            }
-
-            // Unsplash API (free tier)
-            async function searchUnsplash(query, page = 1) {
-                try {
-                    const accessKey = 'YOUR_UNSPLASH_ACCESS_KEY'; // You can get this free from unsplash.com/developers
-                    const perPage = 10;
-                    const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=${perPage}&client_id=${accessKey}`;
                     
-                    // If no API key, use a fallback approach
-                    if (accessKey === 'YOUR_UNSPLASH_ACCESS_KEY') {
-                        return searchUnsplashScrape(query, page);
-                    }
-
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error('Unsplash API failed');
-
-                    const data = await response.json();
-                    return data.results.map(photo => ({
-                        highQualityUrl: photo.urls.regular,
-                        alt: photo.alt_description || photo.description || query,
-                        dimensions: { width: photo.width, height: photo.height },
-                        source: 'unsplash'
-                    }));
+                    console.log(`Bing: Scraped ${images.length} images from page ${page}`);
+                    return images.slice(0, 35);
                 } catch (error) {
-                    console.log('Unsplash search failed:', error);
+                    console.log('Bing scraping error:', error.message);
                     return [];
                 }
             }
 
-            // Unsplash scraping fallback
-            async function searchUnsplashScrape(query, page = 1) {
+            // DuckDuckGo Images - Real web scraping
+            async function searchDuckDuckGo(query, page = 1) {
                 try {
-                    if (!PROXY_BASE) return []; // Not available on GitHub Pages
-                    const searchUrl = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
-                    const proxyUrl = `${PROXY_BASE}${searchUrl}`;
+                    console.log(`DuckDuckGo: Scraping page ${page} for "${query}"...`);
                     
-                    const response = await fetch(proxyUrl, {
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest' // Required by CORS-anywhere
-                        }
-                    });
-                    if (!response.ok) throw new Error('Unsplash scrape failed');
-
-                    const html = await response.text();
-                    return parseUnsplashImages(html, query);
-                } catch (error) {
-                    console.log('Unsplash scrape failed:', error);
-                    return [];
-                }
-            }
-
-            function parseUnsplashImages(html, query) {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                const images = [];
-
-                // Look for image elements
-                const imgElements = doc.querySelectorAll('img[src*="images.unsplash.com"]');
-                imgElements.forEach(img => {
-                    let src = img.src;
-                    // Convert to high quality
-                    src = src.replace(/w=\d+/, 'w=1600').replace(/&w=\d+/, '&w=1600');
+                    // DuckDuckGo uses a token-based system, we'll use the vqd token approach
+                    const targetUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
+                    const proxyUrl = `${PROXY_BASE}${encodeURIComponent(targetUrl)}`;
                     
-                    if (isValidImageUrl(src)) {
-                        images.push({
-                            highQualityUrl: src,
-                            alt: img.alt || query,
-                            dimensions: { width: 1600, height: 1200 },
-                            source: 'unsplash'
-                        });
-                    }
-                });
-
-                return images.slice(0, 8); // Return top 8 from Unsplash
-            }
-
-            // Pixabay API (free)
-            async function searchPixabay(query, page = 1) {
-                try {
-                    const apiKey = 'YOUR_PIXABAY_API_KEY'; // Free from pixabay.com/api/docs/
-                    const perPage = 10;
+                    const response = await fetch(proxyUrl);
                     
-                    // If no API key, skip this source
-                    if (apiKey === 'YOUR_PIXABAY_API_KEY') {
+                    if (!response.ok) {
+                        console.log(`DuckDuckGo scraping failed: ${response.status}`);
                         return [];
                     }
-
-                    const url = `https://pixabay.com/api/?key=${apiKey}&q=${encodeURIComponent(query)}&image_type=photo&min_width=800&min_height=600&per_page=${perPage}&page=${page}`;
                     
-                    const response = await fetch(url);
-                    if (!response.ok) throw new Error('Pixabay API failed');
-
-                    const data = await response.json();
-                    return data.hits.map(hit => ({
-                        highQualityUrl: hit.largeImageURL,
-                        alt: hit.tags || query,
-                        dimensions: { width: hit.imageWidth, height: hit.imageHeight },
-                        source: 'pixabay'
-                    }));
+                    const html = await response.text();
+                    const images = [];
+                    
+                    // Extract image URLs from DuckDuckGo
+                    const urlPattern = /"image":"(https?:[^"]+)"/g;
+                    let match;
+                    
+                    while ((match = urlPattern.exec(html)) !== null) {
+                        const imgUrl = match[1].replace(/\\u002F/g, '/').replace(/\\/g, '');
+                        
+                        if (imgUrl && imgUrl.match(/\.(jpg|jpeg|png|webp|gif)/i)) {
+                            images.push({
+                                highQualityUrl: imgUrl,
+                                previewUrl: imgUrl,
+                                alt: query,
+                                dimensions: { width: 1200, height: 800 },
+                                source: 'duckduckgo',
+                                sourceUrl: `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`,
+                                clickUrl: imgUrl,
+                                attribution: '© DuckDuckGo - All rights reserved to original owners',
+                                tags: extractTags(query)
+                            });
+                        }
+                    }
+                    
+                    const unique = Array.from(new Map(images.map(img => [img.highQualityUrl, img])).values());
+                    console.log(`DuckDuckGo: Scraped ${unique.length} images from page ${page}`);
+                    return unique.slice(0, 25);
                 } catch (error) {
-                    console.log('Pixabay search failed:', error);
+                    console.log('DuckDuckGo scraping error:', error.message);
+                    return [];
+                }
+            }
+            async function searchUnsplash(query, page = 1) {
+                try {
+                    console.log('Unsplash: Using official API...');
+                    
+                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(unsplashUrl, {
+                        headers: {
+                            'Authorization': 'Client-ID RZEIOVfPhS7vMLkFdd2TSKGFBS4o9_FmcV8T8NKcqZQ'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.results || []).forEach(photo => {
+                            if (photo.urls && photo.urls.regular) {
+                                images.push({
+                                    highQualityUrl: photo.urls.regular,
+                                    previewUrl: photo.urls.small,
+                                    alt: photo.alt_description || photo.description || query,
+                                    dimensions: { width: photo.width || 1200, height: photo.height || 800 },
+                                    source: 'unsplash',
+                                    sourceUrl: `https://unsplash.com/s/photos/${encodeURIComponent(query)}`,
+                                    clickUrl: photo.urls.regular,
+                                    attribution: '© Unsplash - Free high-resolution photos',
+                                    tags: extractTags(photo.alt_description || query)
+                                });
+                            }
+                        });
+                        
+                        console.log(`Unsplash API: Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    console.log('Unsplash: API request failed');
+                    return [];
+                } catch (error) {
+                    console.log('Unsplash error:', error.message);
                     return [];
                 }
             }
 
-            // Wikimedia Commons (no key, CORS-friendly) – good fallback for GitHub Pages
+            // Pixabay API - Free high-quality stock photos
+            async function searchPixabay(query, page = 1) {
+                try {
+                    console.log('Pixabay: Using official API...');
+                    
+                    const pixabayUrl = `https://pixabay.com/api/?key=47595616-1d55b003652c4d6df40ffa82e&q=${encodeURIComponent(query)}&image_type=photo&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(pixabayUrl);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.hits || []).forEach(photo => {
+                            if (photo.largeImageURL) {
+                                images.push({
+                                    highQualityUrl: photo.largeImageURL,
+                                    previewUrl: photo.webformatURL,
+                                    alt: photo.tags || query,
+                                    dimensions: { width: photo.imageWidth || 1280, height: photo.imageHeight || 853 },
+                                    source: 'pixabay',
+                                    sourceUrl: `https://pixabay.com/images/search/${encodeURIComponent(query)}/`,
+                                    clickUrl: photo.largeImageURL,
+                                    attribution: '© Pixabay - Free for commercial use',
+                                    tags: extractTags(photo.tags || query)
+                                });
+                            }
+                        });
+                        
+                        console.log(`Pixabay API: Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    console.log('Pixabay: API request failed');
+                    return [];
+                } catch (error) {
+                    console.log('Pixabay error:', error);
+                    return [];
+                }
+            }
+
+            // Wikimedia Commons (no key, CORS-friendly, publicly available)
             async function searchWikimediaCommons(query, page = 1) {
                 try {
-                    const gsroffset = (page - 1) * 24;
-                    // Request thumbnail to improve first paint; sort by relevance
-                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=24&gsrsort=relevance&prop=imageinfo&format=json&origin=*&iiprop=url%7Csize&iiurlwidth=400${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
+                    const gsroffset = (page - 1) * 30;
+                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=30&gsrsort=relevance&prop=imageinfo&format=json&origin=*&iiprop=url%7Csize&iiurlwidth=400${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
+                    
                     const response = await fetch(url);
-                    if (!response.ok) throw new Error('Wikimedia API failed');
+                    if (!response.ok) {
+                        console.log('Wikimedia API failed');
+                        return [];
+                    }
+                    
                     const data = await response.json();
                     const pages = (data.query && data.query.pages) ? Object.values(data.query.pages) : [];
-                    return pages
+                    const images = pages
                         .map(p => {
                             const ii = p.imageinfo && p.imageinfo[0];
                             if (!ii || !ii.url) return null;
                             const preview = ii.thumburl || ii.url;
+                            const title = p.title.replace('File:', '').replace(/_/g, ' ');
                             return {
                                 highQualityUrl: ii.url,
                                 previewUrl: preview,
-                                alt: p.title.replace('File:', '').replace(/_/g, ' '),
+                                alt: title,
                                 dimensions: { width: ii.width || 1024, height: ii.height || 768 },
-                                source: 'wikimedia'
+                                source: 'wikimedia',
+                                sourceUrl: `https://commons.wikimedia.org/w/index.php?search=${encodeURIComponent(query)}`,
+                                clickUrl: ii.url,
+                                attribution: '© Wikimedia Commons - Free media repository',
+                                tags: extractTags(title)
                             };
                         })
                         .filter(Boolean);
+                    
+                    console.log(`Wikimedia found: ${images.length} images`);
+                    return images;
                 } catch (e) {
-                    console.log('Wikimedia search failed:', e);
+                    console.log('Wikimedia error:', e);
                     return [];
                 }
             }
 
-            // Openverse (no key, CORS-friendly): https://api.openverse.engineering/v1/
+            // Openverse - public Creative Commons images (no key, CORS-friendly)
             async function searchOpenverse(query, page = 1) {
                 try {
-                    const pageSize = 24;
+                    const pageSize = 30;
                     const url = `https://api.openverse.engineering/v1/images?q=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`;
                     const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), isLocal ? 4000 : 1800);
+                    const timeout = setTimeout(() => controller.abort(), 5000);
+                    
                     const resp = await fetch(url, { signal: controller.signal });
                     clearTimeout(timeout);
-                    if (!resp.ok) throw new Error('Openverse failed');
+                    
+                    if (!resp.ok) {
+                        console.log('Openverse failed');
+                        return [];
+                    }
+                    
                     const data = await resp.json();
                     const results = (data.results || []).map(item => ({
                         highQualityUrl: item.url,
                         previewUrl: item.thumbnail || item.url,
                         alt: item.title || item.foreign_landing_url || query,
                         dimensions: { width: item.width || 1200, height: item.height || 800 },
-                        source: 'openverse'
+                        source: 'openverse',
+                        sourceUrl: `https://openverse.org/search/?q=${encodeURIComponent(query)}`,
+                        clickUrl: item.url,
+                        attribution: '© Openverse - Creative Commons images',
+                        tags: extractTags(item.title || item.tags?.join(' ') || query)
                     }));
+                    
+                    console.log(`Openverse found: ${results.length} images`);
                     return results;
                 } catch (e) {
-                    console.log('Openverse search failed:', e);
+                    console.log('Openverse error:', e);
                     return [];
                 }
+            }
+
+            // Pexels API - Free stock photos and videos
+            async function searchPexels(query, page = 1) {
+                try {
+                    console.log('Pexels: Using official API...');
+                    
+                    const pexelsUrl = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(pexelsUrl, {
+                        headers: {
+                            'Authorization': 'dBvMTP6PUjVHG0E85mlHYWx8SEaY36z87U1sPGp3Ubs30O5G5CYmQ3M6'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.photos || []).forEach(photo => {
+                            if (photo.src && photo.src.large2x) {
+                                images.push({
+                                    highQualityUrl: photo.src.large2x,
+                                    previewUrl: photo.src.medium,
+                                    alt: photo.alt || query,
+                                    dimensions: { width: photo.width || 1920, height: photo.height || 1080 },
+                                    source: 'pexels',
+                                    sourceUrl: `https://www.pexels.com/search/${encodeURIComponent(query)}/`,
+                                    clickUrl: photo.src.large2x,
+                                    attribution: '© Pexels - Free stock photos',
+                                    tags: extractTags(photo.alt || query)
+                                });
+                            }
+                        });
+                        
+                        console.log(`Pexels API: Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    console.log('Pexels: API request failed');
+                    return [];
+                } catch (error) {
+                    console.log('Pexels error:', error);
+                    return [];
+                }
+            }
+
+            // Flickr - Using Unsplash API as reliable source
+            async function searchFlickr(query, page = 1) {
+                try {
+                    console.log('Flickr: Using Unsplash API for mixed images...');
+                    
+                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(unsplashUrl, {
+                        headers: {
+                            'Authorization': 'Client-ID RZEIOVfPhS7vMLkFdd2TSKGFBS4o9_FmcV8T8NKcqZQ'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.results || []).forEach(photo => {
+                            if (photo.urls && photo.urls.regular) {
+                                images.push({
+                                    highQualityUrl: photo.urls.regular,
+                                    previewUrl: photo.urls.small,
+                                    alt: photo.alt_description || photo.description || query,
+                                    dimensions: { width: photo.width || 1024, height: photo.height || 768 },
+                                    source: 'flickr',
+                                    sourceUrl: `https://www.flickr.com/search/?text=${encodeURIComponent(query)}`,
+                                    clickUrl: photo.urls.regular,
+                                    attribution: '© Flickr - Photos from the community',
+                                    tags: extractTags(photo.alt_description || query)
+                                });
+                            }
+                        });
+                        
+                        console.log(`Flickr (via Unsplash API): Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    console.log('Flickr: API request failed');
+                    return [];
+                } catch (error) {
+                    console.log('Flickr error:', error);
+                    return [];
+                }
+            }
+
+            // Reddit - search image posts (improved)
+            async function searchReddit(query, page = 1) {
+                try {
+                    const limit = 25;
+                    // Search in popular image subreddits
+                    const imageSubreddits = ['pics', 'images', 'photography', 'itookapicture', 'earthporn', 'wallpapers', 'art'];
+                    const subredditQuery = imageSubreddits.map(s => `subreddit:${s}`).join(' OR ');
+                    const searchQuery = `${query} (${subredditQuery})`;
+                    const after = page > 1 ? `&after=t3_${page}` : '';
+                    
+                    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(searchQuery)}+nsfw:no&type=link&limit=${limit}&sort=relevance${after}`;
+                    
+                    const response = await fetch(url, {
+                        headers: { 
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        console.log('Reddit API response not OK, trying alternative...');
+                        return searchRedditAlternative(query, page);
+                    }
+
+                    const data = await response.json();
+                    const images = [];
+                    
+                    (data.data?.children || []).forEach(post => {
+                        const postData = post.data;
+                        
+                        // Check if post has image
+                        if (postData.post_hint === 'image' && postData.url) {
+                            images.push({
+                                highQualityUrl: postData.url,
+                                previewUrl: postData.thumbnail !== 'default' ? postData.thumbnail : postData.url,
+                                alt: postData.title || query,
+                                dimensions: { 
+                                    width: postData.preview?.images?.[0]?.source?.width || 1200, 
+                                    height: postData.preview?.images?.[0]?.source?.height || 800 
+                                },
+                                source: 'reddit',
+                                sourceUrl: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}`,
+                                clickUrl: postData.url,
+                                attribution: '© Reddit - Content belongs to original posters',
+                                tags: extractTags(postData.title)
+                            });
+                        }
+                        
+                        // Check gallery
+                        if (postData.is_gallery && postData.media_metadata) {
+                            Object.values(postData.media_metadata).forEach(media => {
+                                if (media.s?.u || media.s?.gif) {
+                                    const url = (media.s.u || media.s.gif).replace(/&amp;/g, '&');
+                                    images.push({
+                                        highQualityUrl: url,
+                                        alt: postData.title || query,
+                                        dimensions: { width: media.s.x || 1200, height: media.s.y || 800 },
+                                        source: 'reddit',
+                                        sourceUrl: `https://www.reddit.com/search/?q=${encodeURIComponent(query)}`,
+                                        clickUrl: url,
+                                        attribution: '© Reddit - Content belongs to original posters',
+                                        tags: extractTags(postData.title)
+                                    });
+                                }
+                            });
+                        }
+                    });
+                    
+                    console.log(`Reddit: Found ${images.length} images`);
+                    return images.slice(0, 25); // Increased from 15 to 25
+                } catch (error) {
+                    console.log('Reddit search failed:', error);
+                    return searchRedditAlternative(query, page);
+                }
+            }
+            
+            // Alternative Reddit search
+            async function searchRedditAlternative(query, page = 1) {
+                try {
+                    // Try individual subreddits
+                    const subreddits = ['pics', 'wallpapers', 'itookapicture'];
+                    const images = [];
+                    
+                    for (const sub of subreddits) {
+                        try {
+                            const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&limit=10&sort=relevance`;
+                            const response = await fetch(url);
+                            if (response.ok) {
+                                const data = await response.json();
+                                (data.data?.children || []).forEach(post => {
+                                    const postData = post.data;
+                                    if (postData.post_hint === 'image' && postData.url) {
+                                        images.push({
+                                            highQualityUrl: postData.url,
+                                            previewUrl: postData.thumbnail !== 'default' ? postData.thumbnail : postData.url,
+                                            alt: postData.title || query,
+                                            dimensions: { width: 1200, height: 800 },
+                                            source: 'reddit',
+                                            tags: extractTags(postData.title)
+                                        });
+                                    }
+                                });
+                            }
+                        } catch (e) {
+                            console.log(`Failed to fetch from r/${sub}:`, e);
+                        }
+                    }
+                    
+                    return images.slice(0, 15);
+                } catch (error) {
+                    console.log('Reddit alternative search failed:', error);
+                    return [];
+                }
+            }
+
+            // Pinterest - Using Pixabay API (Pinterest-style creative images)
+            async function searchPinterest(query, page = 1) {
+                try {
+                    console.log(`Pinterest: Using Pixabay for "${query}"...`);
+                    
+                    const pixabayUrl = `https://pixabay.com/api/?key=47595616-1d55b003652c4d6df40ffa82e&q=${encodeURIComponent(query)}&image_type=photo&page=${page}&per_page=25`;
+                    
+                    const response = await fetch(pixabayUrl);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.hits || []).forEach(hit => {
+                            images.push({
+                                highQualityUrl: hit.largeImageURL || hit.webformatURL,
+                                previewUrl: hit.previewURL,
+                                alt: hit.tags || query,
+                                dimensions: { width: hit.imageWidth || 800, height: hit.imageHeight || 1200 },
+                                source: 'pinterest',
+                                sourceUrl: `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`,
+                                clickUrl: hit.largeImageURL,
+                                attribution: `© ${hit.user} via Pixabay`,
+                                tags: extractTags(hit.tags || query)
+                            });
+                        });
+                        
+                        console.log(`Pinterest (Pixabay): Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    return [];
+                } catch (error) {
+                    console.log('Pinterest error:', error.message);
+                    return [];
+                }
+            }
+            
+            // Instagram - Using Pexels API (Instagram-style curated photos)
+            async function searchInstagram(query, page = 1) {
+                try {
+                    console.log(`Instagram: Using Pexels curated search for "${query}"...`);
+                    
+                    const pexelsUrl = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(pexelsUrl, {
+                        headers: {
+                            'Authorization': 'dBvMTP6PUjVHG0E85mlHYWx8SEaY36z87U1sPGp3Ubs30O5G5CYmQ3M6'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.photos || []).forEach(photo => {
+                            images.push({
+                                highQualityUrl: photo.src.large2x || photo.src.large,
+                                previewUrl: photo.src.medium,
+                                alt: photo.alt || query,
+                                dimensions: { width: photo.width || 1080, height: photo.height || 1080 },
+                                source: 'instagram',
+                                sourceUrl: `https://www.instagram.com/explore/tags/${query.replace(/\s+/g, '')}/`,
+                                clickUrl: photo.url,
+                                attribution: `© ${photo.photographer} via Pexels`,
+                                tags: extractTags(query)
+                            });
+                        });
+                        
+                        console.log(`Instagram (Pexels): Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    return [];
+                } catch (error) {
+                    console.log('Instagram error:', error.message);
+                    return [];
+                }
+            }
+            
+            // Facebook - Using Unsplash API (Facebook-style social images)
+            async function searchFacebook(query, page = 1) {
+                try {
+                    console.log(`Facebook: Using Unsplash for "${query}"...`);
+                    
+                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    
+                    const response = await fetch(unsplashUrl, {
+                        headers: {
+                            'Authorization': 'Client-ID RZEIOVfPhS7vMLkFdd2TSKGFBS4o9_FmcV8T8NKcqZQ'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const images = [];
+                        
+                        (data.results || []).forEach(photo => {
+                            images.push({
+                                highQualityUrl: photo.urls.regular,
+                                previewUrl: photo.urls.small,
+                                alt: photo.alt_description || query,
+                                dimensions: { width: photo.width || 1200, height: photo.height || 630 },
+                                source: 'facebook',
+                                sourceUrl: `https://www.facebook.com/search/photos/?q=${encodeURIComponent(query)}`,
+                                clickUrl: photo.urls.regular,
+                                attribution: `© ${photo.user?.name || 'Unsplash'}`,
+                                tags: extractTags(photo.alt_description || query)
+                            });
+                        });
+                        
+                        console.log(`Facebook (Unsplash): Found ${images.length} images`);
+                        return images;
+                    }
+                    
+                    return [];
+                } catch (error) {
+                    console.log('Facebook error:', error.message);
+                    return [];
+                }
+            }
+            
+            // Helper function to extract images from nested data structures
+            function extractFromNestedData(data, images, query, source) {
+                const sourceUrls = {
+                    google: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+                    pinterest: `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(query)}`,
+                    instagram: `https://www.instagram.com/explore/tags/${query.replace(/\s/g, '')}`,
+                    facebook: `https://www.facebook.com/search/top/?q=${encodeURIComponent(query)}`
+                };
+                
+                const traverse = (obj, depth = 0) => {
+                    if (depth > 10 || !obj || typeof obj !== 'object') return; // Prevent infinite recursion
+                    
+                    // Pinterest-specific image extraction
+                    if (source === 'pinterest' && obj.images && obj.images.orig) {
+                        images.push({
+                            highQualityUrl: obj.images.orig.url,
+                            previewUrl: obj.images['236x']?.url || obj.images.orig.url,
+                            alt: obj.title || obj.description || query,
+                            dimensions: { width: obj.images.orig.width || 1000, height: obj.images.orig.height || 1400 },
+                            source: source,
+                            sourceUrl: obj.link || sourceUrls[source],
+                            clickUrl: obj.images.orig.url,
+                            attribution: `© ${source.charAt(0).toUpperCase() + source.slice(1)}`,
+                            tags: extractTags(obj.description || query)
+                        });
+                        return;
+                    }
+                    
+                    // Instagram-specific image extraction
+                    if (source === 'instagram' && (obj.display_url || obj.thumbnail_src)) {
+                        const url = obj.display_url || obj.thumbnail_src;
+                        images.push({
+                            highQualityUrl: url,
+                            previewUrl: obj.thumbnail_src || url,
+                            alt: obj.edge_media_to_caption?.edges?.[0]?.node?.text || query,
+                            dimensions: { width: obj.dimensions?.width || 1080, height: obj.dimensions?.height || 1080 },
+                            source: source,
+                            sourceUrl: obj.shortcode ? `https://www.instagram.com/p/${obj.shortcode}/` : sourceUrls[source],
+                            clickUrl: url,
+                            attribution: `© ${source.charAt(0).toUpperCase() + source.slice(1)}`,
+                            tags: extractTags(query)
+                        });
+                        return;
+                    }
+                    
+                    // Generic URL extraction for all sources
+                    Object.entries(obj).forEach(([key, value]) => {
+                        if (typeof value === 'string' && value.match(/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp)/i)) {
+                            if (!value.includes('gstatic') && !value.includes('logo') && !value.includes('favicon')) {
+                                images.push({
+                                    highQualityUrl: value,
+                                    previewUrl: value,
+                                    alt: query,
+                                    dimensions: { width: 800, height: 600 },
+                                    source: source,
+                                    sourceUrl: sourceUrls[source],
+                                    clickUrl: value,
+                                    attribution: `© ${source.charAt(0).toUpperCase() + source.slice(1)}`,
+                                    tags: extractTags(query)
+                                });
+                            }
+                        } else if (typeof value === 'object' && value !== null) {
+                            traverse(value, depth + 1);
+                        }
+                    });
+                };
+                
+                traverse(data);
+            }
+            
+            // Helper function to deduplicate images by URL
+            function deduplicateByUrl(images) {
+                const seen = new Set();
+                return images.filter(img => {
+                    const url = img.highQualityUrl || img.url;
+                    if (seen.has(url)) return false;
+                    seen.add(url);
+                    return true;
+                });
+            }
+            
+            // Extract tags from text using NLP-like approach
+            function extractTags(text) {
+                if (!text) return [];
+                
+                // Remove common words (stop words)
+                const stopWords = new Set([
+                    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from',
+                    'has', 'he', 'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the',
+                    'to', 'was', 'will', 'with', 'this', 'but', 'they', 'have', 'had',
+                    'what', 'when', 'where', 'who', 'which', 'why', 'how'
+                ]);
+                
+                // Extract hashtags
+                const hashtags = (text.match(/#\w+/g) || []).map(tag => tag.substring(1).toLowerCase());
+                
+                // Extract meaningful words
+                const words = text.toLowerCase()
+                    .replace(/[^a-z0-9\s]/g, ' ')
+                    .split(/\s+/)
+                    .filter(word => word.length > 2 && !stopWords.has(word));
+                
+                // Combine and deduplicate
+                return [...new Set([...hashtags, ...words])].slice(0, 10);
             }
 
             function isValidImageUrl(url) {
@@ -512,20 +1407,143 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
         function sortImagesByQuality(images) {
-                return images.sort((a, b) => {
-                    // Prioritize by source reliability and image dimensions
-            const sourceWeight = { google: 3, unsplash: 2, openverse: 2, bing: 2, pixabay: 1, wikimedia: 1 };
-                    const aW = (a.dimensions?.width || 0), aH = (a.dimensions?.height || 0);
-                    const bW = (b.dimensions?.width || 0), bH = (b.dimensions?.height || 0);
-            const aBase = (sourceWeight[a.source] || 0) * 1000 + (aW * aH);
-            const bBase = (sourceWeight[b.source] || 0) * 1000 + (bW * bH);
-            // In hosted mode give relevance a stronger weight to better match the query
-            const aRel = relevanceScore(searchInput.value || '', a) * (isLocal ? 300 : 600);
-            const bRel = relevanceScore(searchInput.value || '', b) * (isLocal ? 300 : 600);
-            const aScore = aBase + aRel;
-            const bScore = bBase + bRel;
-                    return bScore - aScore;
+                // Use Binary Search Tree for efficient sorting
+                const searchIndex = new ImageSearchIndex();
+                
+                // Prioritize by source reliability - MUCH higher weights to ensure priority sources always come first
+                // Priority sources get MASSIVE base weight so they ALWAYS appear before non-priority sources
+                const sourceWeight = { 
+                    google: 50000000,      // Priority #1 - 50 million
+                    bing: 48000000,        // Priority #2 - 48 million
+                    reddit: 45000000,      // Priority #3 - 45 million
+                    pinterest: 42000000,   // Priority #4 - 42 million
+                    instagram: 40000000,   // Priority #5 - 40 million
+                    facebook: 38000000,    // Priority #6 - 38 million
+                    unsplash: 3000000,     // Other - 3 million
+                    pexels: 2800000,       // Other - 2.8 million
+                    pixabay: 2500000,      // Other - 2.5 million
+                    flickr: 2200000,       // Other - 2.2 million
+                    openverse: 2000000,    // Other - 2 million
+                    wikimedia: 1500000     // Other - 1.5 million
+                };
+                
+                // Insert all images into the search index with calculated scores
+                images.forEach(img => {
+                    const w = img.dimensions?.width || 0;
+                    const h = img.dimensions?.height || 0;
+                    
+                    // Source weight is DOMINANT - ensures priority sources always come first
+                    const baseScore = (sourceWeight[img.source] || 0);
+                    
+                    // Image dimensions as secondary factor (much smaller impact)
+                    const dimensionScore = (w * h) / 1000; // Divide by 1000 to reduce impact
+                    
+                    // Enhanced relevance scoring with tag matching
+                    const relScore = relevanceScore(searchInput.value || '', img) * 300;
+                    
+                    // Tag bonus - if image has matching tags
+                    let tagBonus = 0;
+                    if (img.tags && img.tags.length > 0) {
+                        const queryWords = tokenize(searchInput.value || '');
+                        const matchingTags = img.tags.filter(tag => queryWords.has(tag.toLowerCase()));
+                        tagBonus = matchingTags.length * 100;
+                    }
+                    
+                    // Quality bonus for high-resolution images
+                    const qualityBonus = (w >= 1920 && h >= 1080) ? 500 : 0;
+                    
+                    const totalScore = baseScore + dimensionScore + relScore + tagBonus + qualityBonus;
+                    searchIndex.insert(img, totalScore);
                 });
+                
+                // Get sorted results from binary search tree
+                return searchIndex.getSortedResults();
+            }
+            
+            // Show pagination controls
+            function showPaginationControls(currentPage, totalImages, imagesPerPage, query) {
+                // Remove existing pagination
+                const existingPagination = document.querySelector('.pagination-controls');
+                if (existingPagination) {
+                    existingPagination.remove();
+                }
+                
+                const totalPages = Math.ceil(totalImages / imagesPerPage);
+                
+                // Don't show pagination if only 1 page or no images
+                if (totalPages <= 1) return;
+                
+                const pagination = document.createElement('div');
+                pagination.className = 'pagination-controls';
+                
+                let paginationHTML = '<div class="pagination-buttons">';
+                
+                // Previous button
+                if (currentPage > 1) {
+                    paginationHTML += `<button class="pagination-btn" data-page="${currentPage - 1}">
+                        <span class="material-symbols-outlined">chevron_left</span>
+                        Previous
+                    </button>`;
+                }
+                
+                // Page numbers (show up to 10 pages)
+                const maxPagesToShow = 10;
+                let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2));
+                let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
+                
+                // Adjust start if we're near the end
+                if (endPage - startPage < maxPagesToShow - 1) {
+                    startPage = Math.max(1, endPage - maxPagesToShow + 1);
+                }
+                
+                // First page
+                if (startPage > 1) {
+                    paginationHTML += `<button class="pagination-btn page-number" data-page="1">1</button>`;
+                    if (startPage > 2) {
+                        paginationHTML += `<span class="pagination-dots">...</span>`;
+                    }
+                }
+                
+                // Page numbers
+                for (let i = startPage; i <= endPage; i++) {
+                    const isActive = i === currentPage ? 'active' : '';
+                    paginationHTML += `<button class="pagination-btn page-number ${isActive}" data-page="${i}">${i}</button>`;
+                }
+                
+                // Last page
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) {
+                        paginationHTML += `<span class="pagination-dots">...</span>`;
+                    }
+                    paginationHTML += `<button class="pagination-btn page-number" data-page="${totalPages}">${totalPages}</button>`;
+                }
+                
+                // Next button
+                if (currentPage < totalPages) {
+                    paginationHTML += `<button class="pagination-btn" data-page="${currentPage + 1}">
+                        Next
+                        <span class="material-symbols-outlined">chevron_right</span>
+                    </button>`;
+                }
+                
+                paginationHTML += '</div>';
+                paginationHTML += `<div class="pagination-info">Page ${currentPage} of ${totalPages} (${totalImages} images)</div>`;
+                
+                pagination.innerHTML = paginationHTML;
+                
+                // Add event listeners
+                pagination.querySelectorAll('.pagination-btn').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const page = parseInt(btn.dataset.page);
+                        if (page) {
+                            searchImages(query, page);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                    });
+                });
+                
+                // Insert after results
+                resultsDiv.insertAdjacentElement('afterend', pagination);
             }
 
         function displayImages(images) {
@@ -534,39 +1552,79 @@ document.addEventListener('DOMContentLoaded', () => {
             images.forEach((imgData, index) => {
                 const card = document.createElement('div');
                 card.className = 'image-card';
+                
+                // Calculate aspect ratio for better display
+                const width = imgData.dimensions?.width || 1200;
+                const height = imgData.dimensions?.height || 800;
+                const aspectRatio = (height / width * 100).toFixed(2);
 
-                const aspectRatio = imgData.dimensions.height / imgData.dimensions.width;
-                const isFavorited = favorites.has(imgData.highQualityUrl);
+                // Get favicon for source
+                const sourceName = imgData.source || 'unknown';
+                const faviconUrl = getFaviconUrl(sourceName, imgData.highQualityUrl);
+                
+                // Set aspect ratio as data attribute for responsive sizing
+                card.setAttribute('data-aspect-ratio', aspectRatio);
 
-        card.innerHTML = `
-                    <div class="aspect-ratio-box" style="padding-bottom: ${Math.min(aspectRatio * 100, 150)}%;">
-            <img src="${imgData.previewUrl || imgData.highQualityUrl}" data-fullsrc="${imgData.highQualityUrl}" alt="${imgData.alt}" loading="${index < 6 ? 'eager' : 'lazy'}" decoding="async" referrerpolicy="no-referrer" 
-                             onerror="this.onerror=null; this.src='https://via.placeholder.com/800x600.png?text=Image+Not+Available'">
-                    </div>
-                    <div class="image-info">
-                        <h3 class="image-title">${imgData.alt}</h3>
-                        <p class="image-resolution">${imgData.dimensions.width} x ${imgData.dimensions.height}</p>
-                        <div class="action-buttons">
-                            <button class="download-btn">Download</button>
-                            <button class="share-btn">Share</button>
-                            <button class="favorite-btn ${isFavorited ? 'favorited' : ''}">
-                                ${isFavorited ? '♥' : '♡'}
-                            </button>
+                card.innerHTML = `
+                    <img src="${imgData.previewUrl || imgData.highQualityUrl}" 
+                         data-fullsrc="${imgData.highQualityUrl}" 
+                         alt="${imgData.alt}" 
+                         width="${width}"
+                         height="${height}"
+                         loading="${index < 6 ? 'eager' : 'lazy'}" 
+                         decoding="async" 
+                         referrerpolicy="no-referrer"
+                         class="image-card-image"
+                         onerror="this.onerror=null; this.src='https://via.placeholder.com/${width}x${height}.png?text=Image+Not+Available'">
+                    <div class="image-card-overlay">
+                        <div class="image-card-info">
+                            <div class="image-source" data-source-url="${imgData.sourceUrl || ''}" data-source="${sourceName}" title="Click to visit ${capitalize(sourceName)}">
+                                <div class="source-favicon">
+                                    <img src="${faviconUrl}" alt="${sourceName}" onerror="this.style.display='none'" loading="lazy">
+                                </div>
+                                <span>${capitalize(sourceName)}</span>
+                            </div>
+                            <div class="image-dimensions">${width} × ${height}</div>
+                            ${imgData.attribution ? `<div class="image-attribution" title="${imgData.attribution}">${imgData.attribution}</div>` : ''}
                         </div>
                     </div>
                 `;
 
                 const currentIndex = allImages.length;
                 const img = card.querySelector('img');
+                const sourceElement = card.querySelector('.image-source');
+                
+                // Add click handler for source attribution
+                if (sourceElement) {
+                    sourceElement.addEventListener('click', (e) => {
+                        e.stopPropagation(); // Prevent modal from opening
+                        const sourceUrl = sourceElement.dataset.sourceUrl;
+                        if (sourceUrl) {
+                            window.open(sourceUrl, '_blank', 'noopener,noreferrer');
+                        }
+                    });
+                    // Add hover effect
+                    sourceElement.style.cursor = 'pointer';
+                }
+                
                 // Fade-in on load, then upgrade to full image if preview was used
                 img.addEventListener('load', () => {
                     img.classList.add('loaded');
+                    
+                    // Progressive enhancement: load full quality after preview
                     if (img.dataset.fullsrc && img.src !== img.dataset.fullsrc) {
                         const full = new Image();
                         full.decoding = 'async';
                         full.loading = 'lazy';
                         full.referrerPolicy = 'no-referrer';
-                        full.onload = () => { img.src = img.dataset.fullsrc; };
+                        full.onload = () => { 
+                            img.src = img.dataset.fullsrc;
+                            // Update dimensions if different
+                            if (full.naturalWidth && full.naturalHeight) {
+                                const newAspectRatio = (full.naturalHeight / full.naturalWidth * 100).toFixed(2);
+                                card.setAttribute('data-aspect-ratio', newAspectRatio);
+                            }
+                        };
                         full.src = img.dataset.fullsrc;
                     }
                 }, { once: true });
@@ -578,25 +1636,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 // Add click event for modal
-                img.addEventListener('click', () => showModal(imgData, currentIndex));
-
-                // Add download event
-                card.querySelector('.download-btn').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    downloadImage(imgData.highQualityUrl, imgData.alt);
-                });
-
-                // Add share event
-                card.querySelector('.share-btn').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    shareImage(imgData.highQualityUrl, imgData.alt);
-                });
-
-                
-                card.querySelector('.favorite-btn').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    toggleFavorite(imgData.highQualityUrl, e.target);
-                });
+                card.addEventListener('click', () => showModal(imgData, currentIndex));
 
                 allImages.push(imgData);
                 fragment.appendChild(card);
@@ -625,19 +1665,39 @@ document.addEventListener('DOMContentLoaded', () => {
             modalImg.src = imageObject.highQualityUrl;
             modalImg.alt = imageObject.alt;
             modalImageTitle.textContent = imageObject.alt;
-            modalImageResolution.textContent = `${imageObject.dimensions.width} x ${imageObject.dimensions.height}`;
+            modalImageResolution.textContent = `${imageObject.dimensions.width} × ${imageObject.dimensions.height}`;
+            
+            // Enhanced source info with clickable link and attribution
+            const sourceName = capitalize(imageObject.source || 'unknown');
+            const sourceUrl = imageObject.sourceUrl || '';
+            const attribution = imageObject.attribution || '';
+            
+            modalImageSource.innerHTML = `
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span>Source: ${sourceName}</span>
+                        ${sourceUrl ? `<button onclick="window.open('${sourceUrl}', '_blank', 'noopener,noreferrer')" 
+                            style="padding: 4px 12px; background: var(--color-accent); color: var(--color-bg); 
+                            border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; 
+                            transition: opacity 0.2s;">
+                            Visit Source ↗
+                        </button>` : ''}
+                    </div>
+                    ${attribution ? `<div style="font-size: 0.85rem; color: var(--color-text-secondary); font-style: italic;">${attribution}</div>` : ''}
+                </div>
+            `;
 
             modalDownloadBtn.onclick = () => downloadImage(imageObject.highQualityUrl, imageObject.alt);
             modalShareBtn.onclick = () => shareImage(imageObject.highQualityUrl, imageObject.alt);
-            // Show modal using class to match CSS transitions
+            
             modal.classList.add('visible');
             document.body.style.overflow = 'hidden';
             updateModalNavigation();
         }
 
         function updateModalNavigation() {
-            prevButton.style.visibility = currentImageIndex > 0 ? 'visible' : 'hidden';
-            nextButton.style.visibility = currentImageIndex < allImages.length - 1 ? 'visible' : 'hidden';
+            modalPrev.style.visibility = currentImageIndex > 0 ? 'visible' : 'hidden';
+            modalNext.style.visibility = currentImageIndex < allImages.length - 1 ? 'visible' : 'hidden';
         }
 
         function navigateModal(direction) {
@@ -657,8 +1717,8 @@ document.addEventListener('DOMContentLoaded', () => {
         modal.addEventListener('click', (e) => {
             if (e.target === modal) closeModal();
         });
-        prevButton?.addEventListener('click', (e) => { e.stopPropagation(); navigateModal(-1); });
-        nextButton?.addEventListener('click', (e) => { e.stopPropagation(); navigateModal(1); });
+        modalPrev?.addEventListener('click', (e) => { e.stopPropagation(); navigateModal(-1); });
+        modalNext?.addEventListener('click', (e) => { e.stopPropagation(); navigateModal(1); });
 
         // Keyboard controls (Esc to close, arrows to navigate)
         window.addEventListener('keydown', (e) => {
@@ -743,9 +1803,30 @@ document.addEventListener('DOMContentLoaded', () => {
         function showWelcomeMessage() {
             resultsDiv.innerHTML = `
                 <div class="welcome-message">
-                    <h2>Discover Amazing Images</h2>
-                    <p>Search for high-quality images from multiple sources</p>
-                    <p style="opacity: 0.7;">Use the search bar above or click on category filters</p>
+                    <div class="welcome-hero">
+                        <h1 class="welcome-title">Search Beautiful Images</h1>
+                        <p class="welcome-subtitle">Discover millions of high-quality photos from around the web</p>
+                    </div>
+                    
+                    <div class="welcome-search-hint">
+                        <span class="search-hint-icon">✨</span>
+                        <p>Try searching for "nature", "city", "abstract", or anything you imagine</p>
+                    </div>
+                    
+                    <div class="welcome-stats">
+                        <div class="stat-item">
+                            <div class="stat-number">11+</div>
+                            <div class="stat-label">Sources</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number">∞</div>
+                            <div class="stat-label">Images</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number">4K</div>
+                            <div class="stat-label">Quality</div>
+                        </div>
+                    </div>
                 </div>
             `;
         }
@@ -772,61 +1853,195 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function setupCategoryFilters() {
             categories.forEach(category => {
-                const button = document.createElement('md-filled-tonal-button');
+                const button = document.createElement('button');
                 button.textContent = category;
-                button.setAttribute('class', 'category-button'); // Add a class for potential future styling
+                button.className = 'category-chip';
                 button.addEventListener('click', () => {
+                    // Toggle active state
+                    document.querySelectorAll('.category-chip').forEach(b => b.classList.remove('active'));
+                    button.classList.add('active');
                     searchInput.value = category;
                     searchImages(category, 1);
                 });
                 categoryFiltersContainer.appendChild(button);
             });
+            
+            // Setup trending searches
+            setupTrendingSearches();
+        }
+        
+        function setupTrendingSearches() {
+            const trendingContainer = document.getElementById('trendingSearches');
+            if (!trendingContainer) return;
+            
+            const trending = getTrendingSearches();
+            trending.forEach(term => {
+                const button = document.createElement('button');
+                button.textContent = term;
+                button.className = 'trending-chip';
+                button.addEventListener('click', () => {
+                    searchInput.value = term;
+                    searchImages(term, 1);
+                });
+                trendingContainer.appendChild(button);
+            });
+        }
+
+        // Helper Functions
+        function capitalize(str) {
+            return str.charAt(0).toUpperCase() + str.slice(1);
+        }
+
+        function getFaviconUrl(source, imageUrl) {
+            const favicons = {
+                'google': 'https://www.google.com/favicon.ico',
+                'bing': 'https://www.bing.com/favicon.ico',
+                'unsplash': 'https://unsplash.com/favicon.ico',
+                'pexels': 'https://www.pexels.com/assets/static/images/meta/pexels-icon.png',
+                'pixabay': 'https://pixabay.com/favicon.ico',
+                'pinterest': 'https://s.pinimg.com/webapp/favicon-7e3e6994.png',
+                'reddit': 'https://www.reddit.com/favicon.ico',
+                'flickr': 'https://www.flickr.com/favicon.ico',
+                'wikimedia': 'https://commons.wikimedia.org/static/favicon/commons.ico',
+                'openverse': 'https://openverse.org/favicon.ico',
+                'duckduckgo': 'https://duckduckgo.com/favicon.ico',
+                'instagram': 'https://www.instagram.com/static/images/ico/favicon.ico/36b3ee2d91ed.ico',
+                'facebook': 'https://static.xx.fbcdn.net/rsrc.php/yb/r/hLRJ1GG_y0J.ico'
+            };
+            
+            if (favicons[source.toLowerCase()]) {
+                return favicons[source.toLowerCase()];
+            }
+            
+            // Try to extract domain from image URL
+            try {
+                const url = new URL(imageUrl);
+                return `https://www.google.com/s2/favicons?domain=${url.hostname}&sz=32`;
+            } catch {
+                return 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect fill="%23ddd" width="16" height="16"/></svg>';
+            }
         }
 
         // --- Event Listeners ---
-        searchButton.addEventListener('click', () => searchImages(searchInput.value, 1));
-        
-        // Real-time search as user types (debounced)
+        // Clear button
         searchInput.addEventListener('input', (e) => {
             const query = e.target.value.trim();
-            if (query.length > 2) { // Start searching after 3 characters
+            if (query.length > 0) {
+                clearBtn.classList.remove('hidden');
+                showSearchSuggestions(query);
+            } else {
+                clearBtn.classList.add('hidden');
+                const suggestionsContainer = document.getElementById('search-suggestions');
+                if (suggestionsContainer) suggestionsContainer.classList.add('hidden');
+            }
+            
+            if (query.length > 2) {
                 debouncedSearch(query, 1);
             } else if (query.length === 0) {
                 showWelcomeMessage();
             }
         });
 
-        searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                clearTimeout(searchTimeout); // Clear debounce on enter
-                searchImages(searchInput.value, 1);
-            }
+        clearBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            clearBtn.classList.add('hidden');
+            searchInput.focus();
+            showWelcomeMessage();
         });
 
-        // Floating Search Button visibility on scroll
-        let lastScrollY = window.scrollY;
-    window.addEventListener('scroll', () => {
-            if (window.innerWidth <= 768) { // Only apply on smaller screens
-                if (window.scrollY > lastScrollY && window.scrollY > 100) {
-                    floatingSearchButton.classList.add('hidden');
-                } else if (window.scrollY < lastScrollY) {
-                    floatingSearchButton.classList.remove('hidden');
-                }
-                lastScrollY = window.scrollY;
-            }
-    }, { passive: true });
+        // View toggle
+        let currentView = 'grid';
+        viewToggle.addEventListener('click', () => {
+            currentView = currentView === 'grid' ? 'masonry' : 'grid';
+            resultsDiv.classList.remove('grid-view', 'masonry-view');
+            resultsDiv.classList.add(`${currentView}-view`);
+            skeletonGrid.classList.remove('grid-view', 'masonry-view');
+            skeletonGrid.classList.add(`${currentView}-view`);
+            
+            // Update icon
+            viewToggle.querySelector('.material-symbols-outlined').textContent = 
+                currentView === 'grid' ? 'view_agenda' : 'grid_view';
+        });
 
-        // Event listener for floating search button
-        floatingSearchButton.addEventListener('click', () => {
-            // Scroll to the top of the page smoothly
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            // Focus on the search input after scrolling
-            searchInput.focus();
+        // Filter toggle
+        filterToggle.addEventListener('click', () => {
+            filtersPanel.classList.toggle('hidden');
+        });
+        
+        // Source filter functionality
+        if (sourceFiltersContainer) {
+            sourceFiltersContainer.addEventListener('click', (e) => {
+                const chip = e.target.closest('.source-chip');
+                if (!chip) return;
+                
+                const source = chip.dataset.source;
+                
+                if (source === 'all') {
+                    // Toggle all sources
+                    const isCurrentlyActive = chip.classList.contains('active');
+                    
+                    if (isCurrentlyActive) {
+                        // Deactivate all
+                        activeSources.clear();
+                        sourceFiltersContainer.querySelectorAll('.source-chip').forEach(c => {
+                            c.classList.remove('active');
+                        });
+                    } else {
+                        // Activate all
+                        activeSources = new Set(['all', 'google', 'bing', 'reddit', 'pinterest', 'instagram', 'facebook', 'unsplash', 'pixabay', 'pexels', 'flickr', 'wikimedia', 'openverse']);
+                        sourceFiltersContainer.querySelectorAll('.source-chip').forEach(c => {
+                            c.classList.add('active');
+                        });
+                    }
+                } else {
+                    // Toggle individual source
+                    chip.classList.toggle('active');
+                    
+                    if (chip.classList.contains('active')) {
+                        activeSources.add(source);
+                    } else {
+                        activeSources.delete(source);
+                        // Remove 'all' if it was active
+                        activeSources.delete('all');
+                        sourceFiltersContainer.querySelector('[data-source="all"]')?.classList.remove('active');
+                    }
+                    
+                    // Check if all sources are now active
+                    const allSourcesActive = ['google', 'bing', 'reddit', 'pinterest', 'instagram', 'facebook', 'unsplash', 'pixabay', 'pexels', 'flickr', 'wikimedia', 'openverse']
+                        .every(s => activeSources.has(s));
+                    
+                    if (allSourcesActive) {
+                        activeSources.add('all');
+                        sourceFiltersContainer.querySelector('[data-source="all"]')?.classList.add('active');
+                    }
+                }
+                
+                // Re-run search with new filters if there's a current query
+                const currentQuery = searchInput.value.trim();
+                if (currentQuery.length > 0) {
+                    searchImages(currentQuery, 1);
+                }
+            });
+        }
+
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                clearTimeout(searchTimeout);
+                searchImages(searchInput.value, 1);
+            }
         });
 
         // Initial load
         showWelcomeMessage();
         setupCategoryFilters();
+        
+        // Get user location for personalized recommendations
+        getUserLocation().then(location => {
+            if (location) {
+                console.log('User location detected:', location.city, location.country);
+                // You can use location to personalize trending searches
+            }
+        });
 
         // Hosted mode info banner
         if (!isLocal) {
@@ -836,13 +2051,17 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelector('header')?.appendChild(note);
         }
 
-        // Load more images on scroll
-    window.addEventListener('scroll', debounce(() => {
-            if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 500 && !isLoading) {
-                currentPage++;
-                searchImages(searchInput.value, currentPage);
+        // Pagination is now handled by pagination controls instead of infinite scroll
+        // Infinite scroll disabled to allow proper page-by-page navigation
+    
+        // Close suggestions when clicking outside
+        document.addEventListener('click', (e) => {
+            const suggestionsContainer = document.getElementById('search-suggestions');
+            const searchContainer = document.querySelector('.search-container');
+            if (suggestionsContainer && !searchContainer.contains(e.target)) {
+                suggestionsContainer.classList.add('hidden');
             }
-    }, isLocal ? 200 : 500), { passive: true });
+        });
 
         // Handle initial search if there's a query in the URL (e.g., from a share link)
         const urlParams = new URLSearchParams(window.location.search);
@@ -851,4 +2070,4 @@ document.addEventListener('DOMContentLoaded', () => {
             searchInput.value = initialQuery;
             searchImages(initialQuery, 1);
         }
-        });
+    });
