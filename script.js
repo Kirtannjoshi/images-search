@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const API_BASE_URL = window.location.hostname === 'localhost' 
                 ? 'http://localhost:3000/api' 
                 : null; // No API for GitHub Pages
-            const USE_REST_API = window.location.hostname === 'localhost'; // Only use API locally
+            const USE_REST_API = false; // Disabled - using client-side API calls directly
             
             // --- UI Elements ---
             const searchInput = document.getElementById('search-input');
@@ -17,6 +17,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const skeletonGrid = document.getElementById('skeleton-loader');
             const categoryFiltersContainer = document.getElementById('categoryFilters');
             const sourceFiltersContainer = document.getElementById('sourceFilters');
+            const alertsContainer = document.getElementById('alerts-container');
+            const mainContent = document.getElementById('main-content');
 
             // --- Modal Elements ---
             const modal = document.getElementById('imageModal');
@@ -37,8 +39,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const favorites = new Set();
             
             // Active source filters - priority sources listed first
-            let activeSources = new Set(['all', 'google', 'bing', 'reddit', 'pinterest', 'instagram', 'facebook', 'unsplash', 'pixabay', 'pexels', 'flickr', 'wikimedia', 'openverse']);
-            const prioritySources = ['google', 'bing', 'reddit', 'pinterest', 'instagram', 'facebook']; // Priority order
+            // ONLY 3 MAIN SOURCES: Google, Bing, Reddit
+            let activeSources = new Set(['all', 'google', 'bing', 'reddit']);
+            const prioritySources = ['google', 'bing', 'reddit']; // Priority order
 
             // Performance optimization: Add caching
             const imageCache = new Map();
@@ -213,16 +216,18 @@ document.addEventListener('DOMContentLoaded', () => {
             // Get trending searches based on location and history
             function getTrendingSearches() {
                 const defaultTrending = [
-                    'AI Art', 'Space', 'Ocean', 'Mountains', 'Sunset', 'City Lights',
-                    'Minimalist', 'Abstract Art', 'Wildlife', 'Landscape'
+                    'sunset landscapes', 'urban architecture', 'nature wildlife', 
+                    'abstract art', 'food photography', 'space astronomy',
+                    'minimalist', 'city lights', 'ocean waves', 'mountains',
+                    'AI art', 'portraits', 'vintage', 'cars', 'technology'
                 ];
                 
                 // Combine with recent searches
                 const recent = searchHistory.slice(0, 5);
                 const combined = [...recent, ...defaultTrending];
                 
-                // Remove duplicates and return top 10
-                return [...new Set(combined)].slice(0, 10);
+                // Remove duplicates and return top 15
+                return [...new Set(combined)].slice(0, 15);
             }
             
             // Add search to history
@@ -330,6 +335,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 return highQualityUrl;
             }
 
+            // Alert System
+            function showAlert(message, type = 'info', duration = 5000) {
+                const alert = document.createElement('div');
+                alert.className = `alert alert-${type}`;
+                
+                const icon = type === 'error' ? 'error' : type === 'warning' ? 'warning' : 'info';
+                alert.innerHTML = `
+                    <span class="material-symbols-outlined">${icon}</span>
+                    <span>${message}</span>
+                `;
+                
+                if (alertsContainer) {
+                    alertsContainer.appendChild(alert);
+                    
+                    if (duration > 0) {
+                        setTimeout(() => {
+                            alert.style.animation = 'slideIn 0.3s ease-out reverse';
+                            setTimeout(() => alert.remove(), 300);
+                        }, duration);
+                    }
+                }
+            }
+
             function getImageDimensions(url) {
                 return new Promise((resolve) => {
                     const img = new Image();
@@ -434,35 +462,23 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     }
                     
-                    // If REST API is disabled or returned no results, fallback to client-side sources
+                    // If REST API is disabled or returned no results, use ONLY 3 main sources
                     if (!USE_REST_API || allValidImages.length === 0) {
-                        console.log('📡 Using client-side API sources...');
+                        console.log('📡 Using 3 main sources: Reddit + Google + Bing...');
                         
-                        // Only use API-based sources that work without a backend server
+                        // ONLY 3 SOURCES: Reddit, Google, Bing
                         const searchPromises = [
                             Promise.race([
                                 searchReddit(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 2000))
+                                new Promise(resolve => setTimeout(() => resolve([]), 3000))
                             ]),
                             Promise.race([
-                                searchUnsplash(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 1200))
+                                searchGoogleImages(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), 4000))
                             ]),
                             Promise.race([
-                                searchPixabay(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 1200))
-                            ]),
-                            Promise.race([
-                                searchPexels(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 1500))
-                            ]),
-                            Promise.race([
-                                searchWikimediaCommons(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 1400))
-                            ]),
-                            Promise.race([
-                                searchOpenverse(query, page),
-                                new Promise(resolve => setTimeout(() => resolve([]), 1200))
+                                searchBingImages(query, page),
+                                new Promise(resolve => setTimeout(() => resolve([]), 4000))
                             ])
                         ];
 
@@ -473,10 +489,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         const otherImages = [];
                         
                         // Source names MUST match the searchPromises array order!
-                        // Order: Reddit, Unsplash, Pixabay, Pexels, Wikimedia, Openverse
-                        const sourceNames = ['reddit', 'unsplash', 'pixabay', 'pexels', 'wikimedia', 'openverse'];
-                        const sourceDisplayNames = ['Reddit', 'Unsplash', 'Pixabay', 'Pexels', 'Wikimedia', 'Openverse'];
-                        const prioritySourcesList = ['reddit', 'unsplash']; // Reddit and Unsplash are priority
+                        // Order: Reddit, Google, Bing (ONLY 3 SOURCES)
+                        const sourceNames = ['reddit', 'google', 'bing'];
+                        const sourceDisplayNames = ['Reddit', 'Google Images', 'Bing Images'];
+                        const prioritySourcesList = ['google', 'bing', 'reddit']; // Google and Bing are priority for accuracy
                         
                         let totalFound = 0;
                         let successCount = 0;
@@ -544,27 +560,34 @@ document.addEventListener('DOMContentLoaded', () => {
                         saveToSession(cacheKey, toStore);
                     }
 
-                    // Display images with pagination support (30 images per page for better UX)
-                    const imagesPerPage = 30;
-                    const startIndex = 0;
-                    const endIndex = imagesPerPage;
+                    // Display images with pagination support (increased to 60 images per page for more results)
+                    const imagesPerPage = 60;
+                    const startIndex = (page - 1) * imagesPerPage;
+                    const endIndex = startIndex + imagesPerPage;
                     
                     if (sortedImages.length > 0) {
                         if (page === 1) {
                             resultsDiv.innerHTML = '';
+                            allImages = sortedImages; // Store all images for pagination
                         }
                         displayImages(sortedImages.slice(startIndex, endIndex));
                         hideSkeletonLoading();
                         
                         // Show pagination controls
                         showPaginationControls(page, sortedImages.length, imagesPerPage, query);
+                        
+                        console.log(`✅ Search complete: ${sortedImages.length} images found for "${query}"`);
                     } else if (page === 1) {
                         hideSkeletonLoading();
                         showNoResults();
+                        showAlert('No images found. Try different search terms.', 'warning', 5000);
                     }
                 } catch (error) {
                     console.error('Search error:', error);
-                    if (page === 1) showError();
+                    if (page === 1) {
+                        showError();
+                        showAlert('Search failed. Please try again.', 'error', 5000);
+                    }
                 } finally {
                     loadingDiv.classList.add('hidden');
                     isLoading = false;
@@ -584,12 +607,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     console.log(`Google Images: Searching for "${query}" page ${page}...`);
                     
-                    // Using SerpApi for real Google Images results
+                    // Using SerpApi for real Google Images results (if available)
                     // Free tier: 100 searches/month
                     const serpApiKey = 'f8d0e3c4c78588f4f9e0e4e9c4f9e0e4e9c4f9e0e4e9c4f9e0e4e9c4f9e0';
-                    const start = (page - 1) * 20;
+                    const serpPageNum = page - 1;
                     
-                    const serpUrl = `https://serpapi.com/search.json?engine=google_images&q=${encodeURIComponent(query)}&ijn=${page - 1}&api_key=${serpApiKey}`;
+                    const serpUrl = `https://serpapi.com/search.json?engine=google_images&q=${encodeURIComponent(query)}&ijn=${serpPageNum}&api_key=${serpApiKey}`;
                     
                     try {
                         const response = await fetch(serpUrl);
@@ -624,38 +647,60 @@ document.addEventListener('DOMContentLoaded', () => {
                         console.log('SerpApi not available, using fallback...');
                     }
                     
-                    // Fallback to Unsplash for high-quality images
-                    console.log('Google: Using Unsplash as fallback...');
-                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    // Real Google Images scraping using CORS proxy
+                    console.log('Google: Real scraping from Google Images...');
+                    const start = (page - 1) * 50;
+                    const targetUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch&start=${start}&safe=off`;
+                    const proxyUrl = `${PROXY_BASE}${encodeURIComponent(targetUrl)}`;
                     
-                    const response = await fetch(unsplashUrl, {
+                    const response = await fetch(proxyUrl, {
                         headers: {
-                            'Authorization': 'Client-ID RZEIOVfPhS7vMLkFdd2TSKGFBS4o9_FmcV8T8NKcqZQ'
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                         }
                     });
                     
                     if (response.ok) {
-                        const data = await response.json();
+                        const html = await response.text();
                         const images = [];
                         
-                        (data.results || []).forEach(photo => {
-                            images.push({
-                                highQualityUrl: photo.urls.regular,
-                                previewUrl: photo.urls.small,
-                                alt: photo.alt_description || query,
-                                dimensions: { width: photo.width || 1200, height: photo.height || 800 },
-                                source: 'google',
-                                sourceUrl: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
-                                clickUrl: photo.urls.regular,
-                                attribution: '© Unsplash',
-                                tags: extractTags(photo.alt_description || query)
-                            });
-                        });
+                        // Extract image URLs from Google's AF_initDataCallback
+                        const regex = /\["(https:\/\/[^"]+)",(\d+),(\d+)\]/g;
+                        let match;
+                        const seen = new Set();
                         
-                        console.log(`Google (Unsplash fallback): Found ${images.length} images`);
-                        return images;
+                        while ((match = regex.exec(html)) !== null) {
+                            const [, url, width, height] = match;
+                            
+                            // Filter out small images, icons, logos, and duplicates
+                            if (parseInt(width) > 200 && parseInt(height) > 200 && !seen.has(url)) {
+                                seen.add(url);
+                                
+                                // Skip Google's own images and common tracking pixels
+                                if (!url.includes('encrypted-tbn') && 
+                                    !url.includes('gstatic.com') && 
+                                    !url.includes('favicon') &&
+                                    !url.includes('logo')) {
+                                    
+                                    images.push({
+                                        highQualityUrl: url,
+                                        previewUrl: url,
+                                        alt: query,
+                                        dimensions: { width: parseInt(width), height: parseInt(height) },
+                                        source: 'google',
+                                        sourceUrl: `https://www.google.com/search?q=${encodeURIComponent(query)}&tbm=isch`,
+                                        clickUrl: url,
+                                        attribution: '© Google Images',
+                                        tags: extractTags(query)
+                                    });
+                                }
+                            }
+                        }
+                        
+                        console.log(`Google Images (scraped): Found ${images.length} images`);
+                        return images.slice(0, 50); // Limit to 50 per page
                     }
                     
+                    console.log('Google Images scraping failed');
                     return [];
                 } catch (error) {
                     console.log('Google error:', error.message);
@@ -772,7 +817,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     console.log('Unsplash: Using official API...');
                     
-                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    // Increase results per page for more comprehensive search
+                    const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=30&content_filter=low`;
                     
                     const response = await fetch(unsplashUrl, {
                         headers: {
@@ -817,7 +863,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     console.log('Pixabay: Using official API...');
                     
-                    const pixabayUrl = `https://pixabay.com/api/?key=47595616-1d55b003652c4d6df40ffa82e&q=${encodeURIComponent(query)}&image_type=photo&page=${page}&per_page=20`;
+                    // safesearch=false for uncensored universal search, increased per_page
+                    const pixabayUrl = `https://pixabay.com/api/?key=47595616-1d55b003652c4d6df40ffa82e&q=${encodeURIComponent(query)}&image_type=all&safesearch=false&page=${page}&per_page=50`;
                     
                     const response = await fetch(pixabayUrl);
                     
@@ -856,8 +903,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Wikimedia Commons (no key, CORS-friendly, publicly available)
             async function searchWikimediaCommons(query, page = 1) {
                 try {
-                    const gsroffset = (page - 1) * 30;
-                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=30&gsrsort=relevance&prop=imageinfo&format=json&origin=*&iiprop=url%7Csize&iiurlwidth=400${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
+                    // Increased limit for more comprehensive search
+                    const gsroffset = (page - 1) * 50;
+                    const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent(query)}&gsrlimit=50&gsrsort=relevance&prop=imageinfo&format=json&origin=*&iiprop=url%7Csize&iiurlwidth=400${gsroffset ? `&gsroffset=${gsroffset}` : ''}`;
                     
                     const response = await fetch(url);
                     if (!response.ok) {
@@ -898,8 +946,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // Openverse - public Creative Commons images (no key, CORS-friendly)
             async function searchOpenverse(query, page = 1) {
                 try {
-                    const pageSize = 30;
-                    const url = `https://api.openverse.engineering/v1/images?q=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}`;
+                    // Increased page_size and added mature content filter
+                    const pageSize = 50;
+                    const url = `https://api.openverse.engineering/v1/images?q=${encodeURIComponent(query)}&page=${page}&page_size=${pageSize}&mature=true`;
                     const controller = new AbortController();
                     const timeout = setTimeout(() => controller.abort(), 5000);
                     
@@ -937,7 +986,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     console.log('Pexels: Using official API...');
                     
-                    const pexelsUrl = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&page=${page}&per_page=20`;
+                    // Increased per_page for more comprehensive results
+                    const pexelsUrl = `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&page=${page}&per_page=40`;
                     
                     const response = await fetch(pexelsUrl, {
                         headers: {
@@ -1025,14 +1075,15 @@ document.addEventListener('DOMContentLoaded', () => {
             // Reddit - search image posts (improved)
             async function searchReddit(query, page = 1) {
                 try {
-                    const limit = 25;
-                    // Search in popular image subreddits
-                    const imageSubreddits = ['pics', 'images', 'photography', 'itookapicture', 'earthporn', 'wallpapers', 'art'];
+                    const limit = 50;
+                    // Search in ALL image subreddits including NSFW (uncensored search)
+                    const imageSubreddits = ['pics', 'images', 'photography', 'itookapicture', 'earthporn', 'wallpapers', 'art', 'wallpaper', 'imaginarylandscapes', 'spaceporn', 'natureporn', 'cityporn'];
                     const subredditQuery = imageSubreddits.map(s => `subreddit:${s}`).join(' OR ');
                     const searchQuery = `${query} (${subredditQuery})`;
                     const after = page > 1 ? `&after=t3_${page}` : '';
                     
-                    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(searchQuery)}+nsfw:no&type=link&limit=${limit}&sort=relevance${after}`;
+                    // Removed nsfw:no filter for uncensored universal search
+                    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(searchQuery)}&type=link&limit=${limit}&sort=relevance&include_over_18=1${after}`;
                     
                     const response = await fetch(url, {
                         headers: { 
@@ -1778,31 +1829,64 @@ document.addEventListener('DOMContentLoaded', () => {
             resultsDiv.innerHTML = `
                 <div class="welcome-message">
                     <div class="welcome-hero">
-                        <h1 class="welcome-title">Search Beautiful Images</h1>
-                        <p class="welcome-subtitle">Discover millions of high-quality photos from around the web</p>
+                        <h1 class="welcome-title">ImageHunt</h1>
+                        <p class="welcome-subtitle">Search millions of images from Reddit, Google & Bing</p>
                     </div>
                     
-                    <div class="welcome-search-hint">
-                        <span class="search-hint-icon">✨</span>
-                        <p>Try searching for "nature", "city", "abstract", or anything you imagine</p>
-                    </div>
-                    
-                    <div class="welcome-stats">
-                        <div class="stat-item">
-                            <div class="stat-number">11+</div>
-                            <div class="stat-label">Sources</div>
+                    <div class="featured-section">
+                        <div class="featured-header">
+                            <h2>Popular Searches</h2>
                         </div>
-                        <div class="stat-item">
-                            <div class="stat-number">∞</div>
-                            <div class="stat-label">Images</div>
-                        </div>
-                        <div class="stat-item">
-                            <div class="stat-number">4K</div>
-                            <div class="stat-label">Quality</div>
+                        <div class="featured-grid" id="featured-grid">
+                            <div class="featured-card" data-search="thor">
+                                <img class="featured-card-image" src="https://images.unsplash.com/photo-1621155346337-1d19476ba7d6?w=300&h=300&fit=crop" alt="Thor" loading="lazy">
+                                <div class="featured-card-overlay">
+                                    <h3 class="featured-card-title">Thor</h3>
+                                </div>
+                            </div>
+                            <div class="featured-card" data-search="sunset">
+                                <img class="featured-card-image" src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=300&h=300&fit=crop" alt="Sunset" loading="lazy">
+                                <div class="featured-card-overlay">
+                                    <h3 class="featured-card-title">Sunset</h3>
+                                </div>
+                            </div>
+                            <div class="featured-card" data-search="cars">
+                                <img class="featured-card-image" src="https://images.unsplash.com/photo-1494976388531-d1058494cdd8?w=300&h=300&fit=crop" alt="Cars" loading="lazy">
+                                <div class="featured-card-overlay">
+                                    <h3 class="featured-card-title">Cars</h3>
+                                </div>
+                            </div>
+                            <div class="featured-card" data-search="nature">
+                                <img class="featured-card-image" src="https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=300&h=300&fit=crop" alt="Nature" loading="lazy">
+                                <div class="featured-card-overlay">
+                                    <h3 class="featured-card-title">Nature</h3>
+                                </div>
+                            </div>
+                            <div class="featured-card" data-search="space">
+                                <img class="featured-card-image" src="https://images.unsplash.com/photo-1462331940025-496dfbfc7564?w=300&h=300&fit=crop" alt="Space" loading="lazy">
+                                <div class="featured-card-overlay">
+                                    <h3 class="featured-card-title">Space</h3>
+                                </div>
+                            </div>
+                            <div class="featured-card" data-search="city">
+                                <img class="featured-card-image" src="https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?w=300&h=300&fit=crop" alt="City" loading="lazy">
+                                <div class="featured-card-overlay">
+                                    <h3 class="featured-card-title">City</h3>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             `;
+            
+            // Add click handlers to featured cards
+            document.querySelectorAll('.featured-card').forEach(card => {
+                card.addEventListener('click', function() {
+                    const query = this.dataset.search;
+                    searchInput.value = query;
+                    searchImages(query, 1);
+                });
+            });
         }
 
         function showNoResults() {
@@ -1932,15 +2016,44 @@ document.addEventListener('DOMContentLoaded', () => {
             skeletonGrid.classList.remove('grid-view', 'masonry-view');
             skeletonGrid.classList.add(`${currentView}-view`);
             
-            // Update icon
-            viewToggle.querySelector('.material-symbols-outlined').textContent = 
-                currentView === 'grid' ? 'view_agenda' : 'grid_view';
+            // Update icon and label
+            const icon = viewToggle.querySelector('.material-symbols-outlined');
+            const label = viewToggle.querySelector('.button-label');
+            
+            if (currentView === 'grid') {
+                icon.textContent = 'grid_view';
+                label.textContent = 'Grid';
+            } else {
+                icon.textContent = 'view_agenda';
+                label.textContent = 'Masonry';
+            }
+            
+            // Toggle active state
+            viewToggle.classList.toggle('active');
         });
 
         // Filter toggle
         filterToggle.addEventListener('click', () => {
             filtersPanel.classList.toggle('hidden');
+            filterToggle.classList.toggle('active');
+            
+            // On desktop, shift main content
+            if (window.innerWidth >= 1024) {
+                mainContent.classList.toggle('filters-open');
+            }
         });
+        
+        // Filter close button (mobile)
+        const filterCloseBtn = document.getElementById('filter-close-btn');
+        if (filterCloseBtn) {
+            filterCloseBtn.addEventListener('click', () => {
+                filtersPanel.classList.add('hidden');
+                filterToggle.classList.remove('active');
+                if (window.innerWidth >= 1024) {
+                    mainContent.classList.remove('filters-open');
+                }
+            });
+        }
         
         // Source filter functionality
         if (sourceFiltersContainer) {
@@ -2005,6 +2118,16 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // Set info tooltip text based on environment
+        const infoTooltipText = document.getElementById('info-tooltip-text');
+        if (infoTooltipText) {
+            if (isLocal) {
+                infoTooltipText.textContent = 'Local mode: Using free API sources (Reddit, Unsplash, Pexels, Pixabay, Wikimedia, Openverse)';
+            } else {
+                infoTooltipText.textContent = 'Uses free API sources: Reddit, Unsplash, Pexels, Pixabay, Wikimedia, Openverse';
+            }
+        }
+
         // Initial load
         showWelcomeMessage();
         setupCategoryFilters();
@@ -2017,13 +2140,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Hosted mode info banner
-        if (!isLocal) {
-            const note = document.createElement('div');
-            note.style.cssText = 'margin-top:8px;font-size:12px;opacity:.7;text-align:center;';
-            note.innerHTML = 'Hosted mode uses free API sources: Reddit, Unsplash, Pexels, Pixabay, Wikimedia, Openverse. <a href="https://github.com/Kirtannjoshi/images-search#readme" target="_blank" style="color:#4a9eff;">Run locally</a> for Google Images scraping (90+ results).';
-            document.querySelector('header')?.appendChild(note);
-        }
+        // Info banner removed - now using tooltip icon in header
 
         // Pagination is now handled by pagination controls instead of infinite scroll
         // Infinite scroll disabled to allow proper page-by-page navigation

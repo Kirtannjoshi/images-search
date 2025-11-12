@@ -54,6 +54,10 @@
                 <div class="logo">
                     <span class="material-symbols-outlined">image_search</span>
                     <h1>ImageHunt</h1>
+                    <div class="info-tooltip" id="info-tooltip">
+                        <span class="material-symbols-outlined info-icon">info</span>
+                        <div class="tooltip-content" id="info-tooltip-text">Searches 3 major sources: Reddit, Google, Bing</div>
+                    </div>
                 </div>
                 <div class="search-container">
                     <div class="search-box">
@@ -68,7 +72,7 @@
                 <div class="header-actions">
                     <button class="view-toggle" id="view-toggle" title="Switch between Grid and Masonry view" aria-label="Toggle view">
                         <span class="material-symbols-outlined">grid_view</span>
-                        <span class="button-label">View</span>
+                        <span class="button-label">Grid</span>
                     </button>
                     <button class="filter-toggle" id="filter-toggle" title="Show/hide filters and categories" aria-label="Toggle filters">
                         <span class="material-symbols-outlined">tune</span>
@@ -77,6 +81,9 @@
                 </div>
             </div>
             <div class="filters-panel hidden" id="filters-panel">
+                <button class="filter-close-btn" id="filter-close-btn">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
                 <div class="filter-section-header">
                     <h3>Filters</h3>
                     <p class="filter-description">Refine your search results</p>
@@ -93,51 +100,15 @@
                         </button>
                         <button class="source-chip active" data-source="google">
                             <img src="https://www.google.com/favicon.ico" alt="Google" class="source-icon">
-                            Google
+                            Google Images
                         </button>
                         <button class="source-chip active" data-source="bing">
                             <img src="https://www.bing.com/favicon.ico" alt="Bing" class="source-icon">
-                            Bing
+                            Bing Images
                         </button>
                         <button class="source-chip active" data-source="reddit">
                             <img src="https://www.reddit.com/favicon.ico" alt="Reddit" class="source-icon">
                             Reddit
-                        </button>
-                        <button class="source-chip active" data-source="pinterest">
-                            <img src="https://s.pinimg.com/webapp/favicon-7e3e6994.png" alt="Pinterest" class="source-icon">
-                            Pinterest
-                        </button>
-                        <button class="source-chip active" data-source="instagram">
-                            <img src="https://www.instagram.com/static/images/ico/favicon.ico/36b3ee2d91ed.ico" alt="Instagram" class="source-icon">
-                            Instagram
-                        </button>
-                        <button class="source-chip active" data-source="facebook">
-                            <img src="https://static.xx.fbcdn.net/rsrc.php/yb/r/hLRJ1GG_y0J.ico" alt="Facebook" class="source-icon">
-                            Facebook
-                        </button>
-                        <button class="source-chip active" data-source="unsplash">
-                            <img src="https://unsplash.com/favicon.ico" alt="Unsplash" class="source-icon">
-                            Unsplash
-                        </button>
-                        <button class="source-chip active" data-source="pixabay">
-                            <img src="https://pixabay.com/favicon.ico" alt="Pixabay" class="source-icon">
-                            Pixabay
-                        </button>
-                        <button class="source-chip active" data-source="pexels">
-                            <img src="https://www.pexels.com/assets/static/images/meta/pexels-icon.png" alt="Pexels" class="source-icon">
-                            Pexels
-                        </button>
-                        <button class="source-chip active" data-source="flickr">
-                            <img src="https://www.flickr.com/favicon.ico" alt="Flickr" class="source-icon">
-                            Flickr
-                        </button>
-                        <button class="source-chip active" data-source="wikimedia">
-                            <img src="https://commons.wikimedia.org/static/favicon/commons.ico" alt="Wikimedia" class="source-icon">
-                            Wikimedia
-                        </button>
-                        <button class="source-chip active" data-source="openverse">
-                            <img src="https://openverse.org/favicon.ico" alt="Openverse" class="source-icon">
-                            Openverse
                         </button>
                     </div>
                 </div>
@@ -158,7 +129,8 @@
             </div>
         </header>
 
-        <main class="main-content">
+        <main class="main-content" id="main-content">
+            <div id="alerts-container"></div>
             <div id="results" class="results-grid grid-view"></div>
             <div id="skeleton-loader" class="results-grid grid-view skeleton-grid hidden">
                 <div class="skeleton-card"></div>
