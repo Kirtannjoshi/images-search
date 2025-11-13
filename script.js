@@ -1,3 +1,28 @@
+document.addEventListener('DOMContentLoaded', () => {
+            // Ensure homepage uses masonry layout
+            const isHomepage = document.body.classList.contains('homepage');
+            if (isHomepage) {
+                const mainContent = document.getElementById('main-content');
+                if (mainContent) {
+                    mainContent.classList.add('homepage');
+                }
+            }
+
+            // Ensure search page uses grid layout
+            const isSearchPage = document.body.classList.contains('search-results-page');
+            if (isSearchPage) {
+                const resultsDiv = document.getElementById('results');
+                if (resultsDiv) {
+                    resultsDiv.classList.add('search-results');
+                }
+
+                // Fix filters functionality
+                const filtersPanel = document.querySelector('.filters-panel-wrapper');
+                if (filtersPanel) {
+                    filtersPanel.style.display = 'block';
+                }
+            }
+        });
 
 document.addEventListener('DOMContentLoaded', () => {
             // --- API Configuration ---
@@ -409,6 +434,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         allImages = [];
                     }
                     displayImages(cachedResults);
+                    window.scrollTo({ top: 0, behavior: 'smooth' }); // Scroll to top
                     return;
                 }
 
@@ -417,6 +443,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     resultsDiv.innerHTML = '';
                     allImages = [];
                     showSkeletonLoading();
+                } else {
+                    currentPage = page; // Update current page
                 }
 
                 loadingDiv.classList.remove('hidden');
@@ -443,14 +471,9 @@ document.addEventListener('DOMContentLoaded', () => {
                                 // Convert API response to our format
                                 allValidImages = data.images.map(img => ({
                                     highQualityUrl: img.url,
-                                    previewUrl: img.thumbnail || img.url,
-                                    alt: img.title || query,
-                                    dimensions: { width: img.width || 1200, height: img.height || 800 },
-                                    source: img.source?.toLowerCase() || 'unknown',
-                                    sourceUrl: img.sourceUrl || '',
-                                    clickUrl: img.url,
-                                    attribution: `© ${img.source}`,
-                                    tags: extractTags(img.title || query)
+                                    alt: img.title,
+                                    source: img.source,
+                                    resolution: img.resolution
                                 }));
                                 
                                 console.log(`✅ REST API returned ${allValidImages.length} images`);
@@ -1077,7 +1100,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                     const limit = 50;
                     // Search in ALL image subreddits including NSFW (uncensored search)
-                    const imageSubreddits = ['pics', 'images', 'photography', 'itookapicture', 'earthporn', 'wallpapers', 'art', 'wallpaper', 'imaginarylandscapes', 'spaceporn', 'natureporn', 'cityporn'];
+                    const imageSubreddits = ['pics', 'images', 'photography', 'it', 'wallpapers', 'EarthPorn'];
                     const subredditQuery = imageSubreddits.map(s => `subreddit:${s}`).join(' OR ');
                     const searchQuery = `${query} (${subredditQuery})`;
                     const after = page > 1 ? `&after=t3_${page}` : '';
@@ -2005,31 +2028,6 @@ document.addEventListener('DOMContentLoaded', () => {
             clearBtn.classList.add('hidden');
             searchInput.focus();
             showWelcomeMessage();
-        });
-
-        // View toggle
-        let currentView = 'grid';
-        viewToggle.addEventListener('click', () => {
-            currentView = currentView === 'grid' ? 'masonry' : 'grid';
-            resultsDiv.classList.remove('grid-view', 'masonry-view');
-            resultsDiv.classList.add(`${currentView}-view`);
-            skeletonGrid.classList.remove('grid-view', 'masonry-view');
-            skeletonGrid.classList.add(`${currentView}-view`);
-            
-            // Update icon and label
-            const icon = viewToggle.querySelector('.material-symbols-outlined');
-            const label = viewToggle.querySelector('.button-label');
-            
-            if (currentView === 'grid') {
-                icon.textContent = 'grid_view';
-                label.textContent = 'Grid';
-            } else {
-                icon.textContent = 'view_agenda';
-                label.textContent = 'Masonry';
-            }
-            
-            // Toggle active state
-            viewToggle.classList.toggle('active');
         });
 
         // Filter toggle
